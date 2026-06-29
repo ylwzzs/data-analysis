@@ -45,3 +45,54 @@ export async function getReport(id: string): Promise<Report | null> {
   const reports = await getReports();
   return reports.find((r) => r.id === id) ?? null;
 }
+
+export interface DataSource {
+  id: string;
+  name: string;
+  description?: string;
+  apiEndpoint: string;
+  authType: "none" | "api_key" | "oauth" | "basic";
+  schedule: string;
+  enabled: boolean;
+  lastSync?: string;
+  rowCount?: number;
+}
+
+// TODO: 接入 InsForge Edge Function (GET /api/sources) 后替换以下 Mock 数据
+export async function getSources(): Promise<DataSource[]> {
+  return [
+    {
+      id: "1",
+      name: "销售系统",
+      description: "订单与销售额数据",
+      apiEndpoint: "https://api.example.com/sales",
+      authType: "api_key",
+      schedule: "每日 02:00",
+      enabled: true,
+      lastSync: "2026-06-29 02:00",
+      rowCount: 12580,
+    },
+    {
+      id: "2",
+      name: "运营平台",
+      description: "用户与活动数据",
+      apiEndpoint: "https://api.example.com/ops",
+      authType: "oauth",
+      schedule: "每小时",
+      enabled: true,
+      lastSync: "2026-06-29 14:00",
+      rowCount: 85230,
+    },
+    {
+      id: "3",
+      name: "财务系统",
+      description: "收支与发票数据",
+      apiEndpoint: "https://api.example.com/finance",
+      authType: "basic",
+      schedule: "每日 03:00",
+      enabled: false,
+      lastSync: "2026-06-28 03:00",
+      rowCount: 4320,
+    },
+  ];
+}

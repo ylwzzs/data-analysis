@@ -23,7 +23,7 @@ export default async function ReportPage({ params }: PageProps) {
     <div className="min-h-screen bg-gray-50">
       <Header />
       <div className="flex">
-        <Sidebar activeItem="reports" />
+        <Sidebar />
         <main className="flex-1 p-6">
           <Link href="/">
             <Button variant="ghost" className="mb-4">

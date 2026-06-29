@@ -10,7 +10,7 @@ export default async function HomePage() {
     <div className="min-h-screen bg-gray-50">
       <Header />
       <div className="flex">
-        <Sidebar activeItem="reports" />
+        <Sidebar />
         <main className="flex-1 p-6">
           <div className="mb-6">
             <h2 className="text-2xl font-bold">报表中心</h2>

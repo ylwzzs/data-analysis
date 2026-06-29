@@ -1,37 +1,41 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+
 import { cn } from "@/lib/utils";
 
 const menuItems = [
-  { id: "reports", label: "报表中心", icon: "📊" },
-  { id: "sources", label: "数据源", icon: "📁" },
-  { id: "settings", label: "设置", icon: "⚙️" },
+  { id: "reports", label: "报表中心", icon: "📊", href: "/" },
+  { id: "sources", label: "数据源", icon: "📁", href: "/sources" },
+  { id: "settings", label: "设置", icon: "⚙️", href: "/settings" },
 ];
 
-interface SidebarProps {
-  activeItem?: string;
-  onItemClick?: (id: string) => void;
-}
+export function Sidebar() {
+  const pathname = usePathname();
 
-export function Sidebar({ activeItem = "reports", onItemClick }: SidebarProps) {
   return (
     <aside className="w-64 border-r bg-gray-50 min-h-[calc(100vh-64px)]">
       <nav className="p-4 space-y-2">
-        {menuItems.map((item) => (
-          <Button
-            key={item.id}
-            variant={activeItem === item.id ? "secondary" : "ghost"}
-            className={cn(
-              "w-full justify-start",
-              activeItem === item.id && "bg-gray-200"
-            )}
-            onClick={() => onItemClick?.(item.id)}
-          >
-            <span className="mr-2">{item.icon}</span>
-            {item.label}
-          </Button>
-        ))}
+        {menuItems.map((item) => {
+          const active =
+            item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
+          return (
+            <Link
+              key={item.id}
+              href={item.href}
+              className={cn(
+                "flex w-full items-center justify-start rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                active
+                  ? "bg-gray-200 text-foreground"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
+              )}
+            >
+              <span className="mr-2">{item.icon}</span>
+              {item.label}
+            </Link>
+          );
+        })}
       </nav>
     </aside>
   );

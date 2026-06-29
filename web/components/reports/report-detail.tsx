@@ -1,7 +1,10 @@
 "use client";
 
-import { Badge } from "@/components/ui/badge";
+import { type ColumnDef } from "@tanstack/react-table";
+
 import { BarChart } from "@/components/charts/bar-chart";
+import { DataTable } from "@/components/reports/data-table";
+import { Badge } from "@/components/ui/badge";
 import {
   Card,
   CardContent,
@@ -13,6 +16,29 @@ import type { Report } from "@/lib/api";
 interface ReportDetailProps {
   report: Report;
 }
+
+interface DetailRow {
+  date: string;
+  region: string;
+  amount: string;
+  orders: number;
+}
+
+const detailColumns: ColumnDef<DetailRow>[] = [
+  { accessorKey: "date", header: "日期" },
+  { accessorKey: "region", header: "区域" },
+  { accessorKey: "amount", header: "金额" },
+  { accessorKey: "orders", header: "订单数" },
+];
+
+// TODO: 明细数据接入真实查询结果
+const detailRows: DetailRow[] = [
+  { date: "2026-06-23", region: "华东", amount: "¥32,000", orders: 85 },
+  { date: "2026-06-23", region: "华北", amount: "¥18,500", orders: 52 },
+  { date: "2026-06-24", region: "华东", amount: "¥41,200", orders: 102 },
+  { date: "2026-06-24", region: "华南", amount: "¥27,800", orders: 71 },
+  { date: "2026-06-25", region: "华北", amount: "¥35,400", orders: 88 },
+];
 
 export function ReportDetail({ report }: ReportDetailProps) {
   // TODO: 图表数据接入真实查询结果
@@ -82,9 +108,7 @@ export function ReportDetail({ report }: ReportDetailProps) {
           <CardTitle>明细数据</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="text-sm text-muted-foreground">
-            数据表格组件将在后续添加
-          </div>
+          <DataTable columns={detailColumns} data={detailRows} />
         </CardContent>
       </Card>
     </div>
