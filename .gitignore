@@ -26,6 +26,9 @@ dist/
 # Claude Code local working files
 .claude/
 
+# InsForge CLI (contains project api key)
+.insforge/
+
 # Logs
 *.log
 npm-debug.log*

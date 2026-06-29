@@ -1,5 +1,6 @@
-// 后端地址：process.env.NEXT_PUBLIC_API_URL || "http://localhost:7130"
-// TODO: 接入 InsForge Edge Function (GET /api/reports) 后替换以下 Mock 数据。
+// 前端数据层：通过 InsForge PostgREST 读取业务表。
+// 对上层组件保持原有类型与函数签名不变（snake_case → camelCase 映射在此完成）。
+import { insforge } from "@/lib/insforge";
 
 export interface Metric {
   name: string;
@@ -16,36 +17,6 @@ export interface Report {
   metrics: Metric[];
 }
 
-export async function getReports(): Promise<Report[]> {
-  return [
-    {
-      id: "1",
-      name: "销售日报",
-      description: "每日销售数据汇总",
-      updatedAt: "2026-06-29 10:30",
-      metrics: [
-        { name: "销售额", value: "¥125,000", change: "+12%", trend: "up" },
-        { name: "订单数", value: "328", change: "+8%", trend: "up" },
-      ],
-    },
-    {
-      id: "2",
-      name: "运营周报",
-      description: "每周运营数据分析",
-      updatedAt: "2026-06-28 18:00",
-      metrics: [
-        { name: "新增用户", value: "1,250", change: "-3%", trend: "down" },
-        { name: "活跃用户", value: "8,500", change: "+5%", trend: "up" },
-      ],
-    },
-  ];
-}
-
-export async function getReport(id: string): Promise<Report | null> {
-  const reports = await getReports();
-  return reports.find((r) => r.id === id) ?? null;
-}
-
 export interface DataSource {
   id: string;
   name: string;
@@ -58,41 +29,79 @@ export interface DataSource {
   rowCount?: number;
 }
 
-// TODO: 接入 InsForge Edge Function (GET /api/sources) 后替换以下 Mock 数据
+// PostgREST 原始行（数据库 snake_case）
+interface ReportRow {
+  id: string;
+  name: string;
+  description: string | null;
+  updated_at: string | null;
+  metrics: Metric[] | null;
+}
+interface SourceRow {
+  id: string;
+  name: string;
+  description: string | null;
+  api_endpoint: string;
+  auth_type: DataSource["authType"];
+  schedule: string;
+  enabled: boolean;
+  last_sync: string | null;
+  row_count: number | null;
+}
+
+// "2026-06-29T10:30:00.000Z" / "2026-06-29 10:30:00" → "2026-06-29 10:30"
+function formatTime(ts: string | null): string {
+  if (!ts) return "";
+  return ts.replace("T", " ").substring(0, 16);
+}
+
+export async function getReports(): Promise<Report[]> {
+  const { data, error } = await insforge.database
+    .from("reports")
+    .select("id,name,description,updated_at,metrics");
+  if (error) throw error;
+  return (data as ReportRow[]).map((r) => ({
+    id: r.id,
+    name: r.name,
+    description: r.description ?? "",
+    updatedAt: formatTime(r.updated_at),
+    metrics: r.metrics ?? [],
+  }));
+}
+
+export async function getReport(id: string): Promise<Report | null> {
+  const { data, error } = await insforge.database
+    .from("reports")
+    .select("id,name,description,updated_at,metrics")
+    .eq("id", id)
+    .single();
+  if (error || !data) return null;
+  const r = data as ReportRow;
+  return {
+    id: r.id,
+    name: r.name,
+    description: r.description ?? "",
+    updatedAt: formatTime(r.updated_at),
+    metrics: r.metrics ?? [],
+  };
+}
+
 export async function getSources(): Promise<DataSource[]> {
-  return [
-    {
-      id: "1",
-      name: "销售系统",
-      description: "订单与销售额数据",
-      apiEndpoint: "https://api.example.com/sales",
-      authType: "api_key",
-      schedule: "每日 02:00",
-      enabled: true,
-      lastSync: "2026-06-29 02:00",
-      rowCount: 12580,
-    },
-    {
-      id: "2",
-      name: "运营平台",
-      description: "用户与活动数据",
-      apiEndpoint: "https://api.example.com/ops",
-      authType: "oauth",
-      schedule: "每小时",
-      enabled: true,
-      lastSync: "2026-06-29 14:00",
-      rowCount: 85230,
-    },
-    {
-      id: "3",
-      name: "财务系统",
-      description: "收支与发票数据",
-      apiEndpoint: "https://api.example.com/finance",
-      authType: "basic",
-      schedule: "每日 03:00",
-      enabled: false,
-      lastSync: "2026-06-28 03:00",
-      rowCount: 4320,
-    },
-  ];
+  const { data, error } = await insforge.database
+    .from("data_sources")
+    .select(
+      "id,name,description,api_endpoint,auth_type,schedule,enabled,last_sync,row_count"
+    );
+  if (error) throw error;
+  return (data as SourceRow[]).map((s) => ({
+    id: s.id,
+    name: s.name,
+    description: s.description ?? undefined,
+    apiEndpoint: s.api_endpoint,
+    authType: s.auth_type,
+    schedule: s.schedule,
+    enabled: s.enabled,
+    lastSync: s.last_sync ? formatTime(s.last_sync) : undefined,
+    rowCount: s.row_count ?? undefined,
+  }));
 }
