@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "insforge": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@insforge/mcp",
+        "--api_key",
+        "${INSFORGE_API_KEY}",
+        "--api_base_url",
+        "http://localhost:7130"
+      ]
+    }
+  }
+}
