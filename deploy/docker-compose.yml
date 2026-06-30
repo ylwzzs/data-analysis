@@ -13,7 +13,7 @@
 
 services:
   postgres:
-    image: ghcr.io/insforge/postgres-all:latest
+    image: caj9ik14016wep.xuanyuan.run/insforge/postgres-all:latest
     restart: unless-stopped
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
@@ -32,7 +32,7 @@ services:
       retries: 5
 
   postgrest:
-    image: postgrest/postgrest:v12.2.12
+    image: caj9ik14016wep.xuanyuan.run/postgrest/postgrest:v12.2.12
     restart: unless-stopped
     environment:
       PGRST_DB_URI: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-insforge}
@@ -56,7 +56,7 @@ services:
       start_period: 10s
 
   insforge:
-    image: ghcr.io/insforge/insforge-oss:latest
+    image: caj9ik14016wep.xuanyuan.run/insforge/insforge-oss:latest
     working_dir: /app
     restart: unless-stopped
     depends_on:
@@ -90,7 +90,7 @@ services:
       - insforge-network
 
   deno:
-    image: ghcr.io/insforge/deno-runtime:latest
+    image: caj9ik14016wep.xuanyuan.run/insforge/deno-runtime:latest
     working_dir: /app
     restart: unless-stopped
     depends_on:

@@ -11,15 +11,8 @@ services:
       - "127.0.0.1:${APP_PORT:-7130}:7130"
 
   web:
-    build:
-      context: ../web
-      dockerfile: Dockerfile
-      args:
-        # NEXT_PUBLIC_* 在 build 阶段内联进客户端产物，必须此时就位
-        NEXT_PUBLIC_INSFORGE_URL: ${NEXT_PUBLIC_INSFORGE_URL}
-        NEXT_PUBLIC_INSFORGE_ANON_KEY: ${NEXT_PUBLIC_INSFORGE_ANON_KEY}
-        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
-    image: data-platform-web
+    # 前端镜像由 GitHub Actions 构建并推送到天翼云镜像服务（hookflow/data-analysis-web）
+    image: registry-crs-xinan1.ctyun.cn/hookflow/data-analysis-web:latest
     restart: unless-stopped
     environment:
       - NODE_ENV=production
@@ -30,7 +23,7 @@ services:
     # 不映射宿主机端口；仅 nginx 在内网通过 web:3000 访问
 
   nginx:
-    image: jonasal/nginx-certbot:latest
+    image: caj9ik14016wep.xuanyuan.run/jonasal/nginx-certbot:latest
     restart: unless-stopped
     environment:
       - CERTBOT_EMAIL=${LETSENCRYPT_EMAIL}
