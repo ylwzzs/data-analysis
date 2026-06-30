@@ -48,12 +48,8 @@ services:
         condition: service_healthy
     networks:
       - insforge-network
-    healthcheck:
-      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/3000'"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
+    # postgrest 官方镜像为 distroless（无 sh/bash/wget），无法内置 healthcheck；
+    # 它秒级 ready，靠 insforge 运行时连接 + 重试保证可用。
 
   insforge:
     image: caj9ik14016wep.xuanyuan.run/insforge/insforge-oss:latest
@@ -63,7 +59,7 @@ services:
       postgres:
         condition: service_healthy
       postgrest:
-        condition: service_healthy
+        condition: service_started
     environment:
       - PORT=7130
       - PROJECT_ROOT=/app
@@ -71,6 +67,8 @@ services:
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:-${JWT_SECRET:-dev-secret-please-change-in-production}}
       - ROOT_ADMIN_USERNAME=${ROOT_ADMIN_USERNAME:-admin}
       - ROOT_ADMIN_PASSWORD=${ROOT_ADMIN_PASSWORD:-${ADMIN_PASSWORD:-change-this-password}}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-change-this-password}
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_DB=${POSTGRES_DB:-insforge}
