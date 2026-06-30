@@ -1,0 +1,37 @@
+# .github/workflows/deploy.yml
+# 生产自动部署：push 到 main（或手动触发）→ SSH 到服务器执行 scripts/deploy.sh。
+# 不在 CI 里 build 前端 —— NEXT_PUBLIC_INSFORGE_ANON_KEY 依赖服务器上该 InsForge 实例，
+# 故 build/migrate 都在服务器上进行，CI 只负责触发。
+#
+# 需在仓库 Settings → Secrets 配置：
+#   SSH_HOST      服务器公网 IP / 域名
+#   SSH_USER      SSH 登录用户（需对 DEPLOY_PATH 有写权限、且能在 docker 组里执行 docker）
+#   SSH_KEY       SSH 私钥（PEM 全文）
+#   DEPLOY_PATH   服务器上仓库克隆路径（如 /opt/data-analytics-platform）
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# 同一时刻只允许一个部署任务，排队而非互相取消（避免半截部署被中断）
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH 到服务器执行部署
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          script_stop: true
+          command_timeout: 30m
+          script: |
+            cd ${{ secrets.DEPLOY_PATH }}
+            bash scripts/deploy.sh

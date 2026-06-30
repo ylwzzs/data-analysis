@@ -1,0 +1,19 @@
+# deploy/docker-compose.override.yml
+# 本地开发 override —— `docker compose up` 时自动加载（无需 -f）。
+# 仅把后端端口映射到宿主机，方便本地直连调试与 MCP 接入；前端用 `npm run dev` 直连这些端口。
+# 生产部署用 `-f docker-compose.prod.yml` 时不加载本文件，后端端口保持内部、不对公网暴露。
+
+services:
+  postgres:
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+  postgrest:
+    ports:
+      - "${POSTGREST_PORT:-5430}:3000"
+  insforge:
+    ports:
+      - "${APP_PORT:-7130}:7130"
+      - "${AUTH_PORT:-7131}:7131"
+  deno:
+    ports:
+      - "${DENO_PORT:-7133}:7133"

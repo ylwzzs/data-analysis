@@ -1,89 +1,131 @@
 # deploy/docker-compose.yml
-# InsForge 数据分析平台部署编排
-# 使用：cd deploy && cp .env.example .env（填入实际配置）&& docker compose up -d
+# InsForge 数据分析平台 —— base 后端栈（本地开发与生产共用，保证两环境后端同构）。
+#
+# 本地开发：cd deploy && docker compose up -d
+#   自动合并 docker-compose.override.yml，把后端端口映射到宿主机；前端用 `npm run dev`。
+# 生产部署：cd deploy && docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#   叠加 web 前端 + nginx 网关；后端端口不对公网暴露，仅 nginx 暴露 80/443。
+#
+# 本文件的后端服务默认不做宿主机端口映射（仅 compose network 内部互通）；
+# 是否对外暴露由 dev/prod override 决定。
+# WECOM_* 不在这里配置 —— 它们是 function secret，由 scripts/deploy-functions.sh
+# 通过 InsForge API 注入（function 用 Deno.env.get 读取）。
 
 services:
-  insforge:
-    image: insforge/insforge:latest
-    container_name: insforge-app
+  postgres:
+    image: ghcr.io/insforge/postgres-all:latest
     restart: unless-stopped
-    ports:
-      - "7130:7130"
-      - "7131:7131"
-      - "7133:7133"
     environment:
-      - POSTGRES_HOST=postgres
-      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
       - POSTGRES_DB=${POSTGRES_DB:-insforge}
-      - POSTGRES_USER=${POSTGRES_USER:-insforge}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - STORAGE_TYPE=minio
-      - STORAGE_ENDPOINT=minio:9000
-      - STORAGE_BUCKET=${STORAGE_BUCKET:-data}
-      - STORAGE_ACCESS_KEY=${MINIO_ROOT_USER}
-      - STORAGE_SECRET_KEY=${MINIO_ROOT_PASSWORD}
-      - JWT_SECRET=${JWT_SECRET}
-      - WECOM_CORP_ID=${WECOM_CORP_ID}
-      - WECOM_AGENT_ID=${WECOM_AGENT_ID}
-      - WECOM_SECRET=${WECOM_SECRET}
-    depends_on:
-      postgres:
-        condition: service_healthy
-      minio:
-        condition: service_started
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-${JWT_SECRET:-dev-secret-please-change-in-production}}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ../database/migrations:/migrations:ro # 供 scripts/migrate.sh 读取
     networks:
       - insforge-network
-
-  postgres:
-    image: postgres:15-alpine
-    container_name: insforge-postgres
-    restart: unless-stopped
-    environment:
-      - POSTGRES_DB=${POSTGRES_DB:-insforge}
-      - POSTGRES_USER=${POSTGRES_USER:-insforge}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ../database/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-insforge}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
       interval: 5s
       timeout: 5s
       retries: 5
-    networks:
-      - insforge-network
 
-  minio:
-    image: minio/minio:latest
-    container_name: insforge-minio
+  postgrest:
+    image: postgrest/postgrest:v12.2.12
     restart: unless-stopped
-    command: server /data --console-address ":9001"
     environment:
-      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-insforge}
-      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+      PGRST_DB_URI: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-insforge}
+      PGRST_OPENAPI_SERVER_PROXY_URI: http://localhost:3000
+      PGRST_DB_SCHEMA: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${JWT_SECRET:-dev-secret-please-change-in-production}
+      # schema 变更时通过 NOTIFY 自动 reload
+      PGRST_DB_CHANNEL_ENABLED: "true"
+      PGRST_DB_CHANNEL: pgrst
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - insforge-network
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/3000'"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  insforge:
+    image: ghcr.io/insforge/insforge-oss:latest
+    working_dir: /app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      postgrest:
+        condition: service_healthy
+    environment:
+      - PORT=7130
+      - PROJECT_ROOT=/app
+      - JWT_SECRET=${JWT_SECRET:-dev-secret-please-change-in-production}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-${JWT_SECRET:-dev-secret-please-change-in-production}}
+      - ROOT_ADMIN_USERNAME=${ROOT_ADMIN_USERNAME:-admin}
+      - ROOT_ADMIN_PASSWORD=${ROOT_ADMIN_PASSWORD:-${ADMIN_PASSWORD:-change-this-password}}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-insforge}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-insforge}
+      - POSTGREST_BASE_URL=http://postgrest:3000
+      - LOGS_DIR=/insforge-logs
+      - INSFORGE_TELEMETRY_DISABLED=1
+      - STORAGE_DIR=/insforge-storage
+      # Deno runtime 地址（精简 compose 易漏此项，缺失会导致 function invoke 502）
+      - DENO_RUNTIME_URL=http://deno:7133
     volumes:
-      - minio_data:/data
+      - storage-data:/insforge-storage
+      - insforge-logs:/insforge-logs
     networks:
       - insforge-network
 
-  nginx:
-    image: nginx:alpine
-    container_name: insforge-nginx
+  deno:
+    image: ghcr.io/insforge/deno-runtime:latest
+    working_dir: /app
     restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./ssl:/etc/nginx/ssl:ro
     depends_on:
-      - insforge
+      - postgres
+      - postgrest
+    environment:
+      - PORT=7133
+      - DENO_ENV=development
+      - DENO_DIR=/deno-dir
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-insforge}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGREST_BASE_URL=http://postgrest:3000
+      - WORKER_TIMEOUT_MS=${WORKER_TIMEOUT_MS:-60000}
+      # function secrets 用此 key 解密；必须与 insforge 服务一致
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-${JWT_SECRET:-dev-secret-please-change-in-production}}
+      - JWT_SECRET=${JWT_SECRET:-dev-secret-please-change-in-production}
+    volumes:
+      - deno_cache:/deno-dir
     networks:
       - insforge-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:7133/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
 volumes:
-  postgres_data:
-  minio_data:
+  postgres-data:
+  deno_cache:
+  storage-data:
+  insforge-logs:
 
 networks:
   insforge-network:

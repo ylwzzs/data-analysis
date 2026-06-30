@@ -1,0 +1,53 @@
+# deploy/docker-compose.prod.yml
+# 生产 override —— 叠加在 base 后端栈（docker-compose.yml）上，加入前端 web 与 nginx 网关。
+# 用法：cd deploy && docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+# 指定 -f 后 docker-compose.override.yml（dev 端口映射）不再自动合并，后端端口保持内部、不对公网暴露。
+
+services:
+  # 后端 API 仅绑定宿主机 loopback，供服务器上的部署脚本（deploy-functions.sh）访问；
+  # 不对公网暴露 —— 公网一律经 nginx 的 80/443 访问。
+  insforge:
+    ports:
+      - "127.0.0.1:${APP_PORT:-7130}:7130"
+
+  web:
+    build:
+      context: ../web
+      dockerfile: Dockerfile
+      args:
+        # NEXT_PUBLIC_* 在 build 阶段内联进客户端产物，必须此时就位
+        NEXT_PUBLIC_INSFORGE_URL: ${NEXT_PUBLIC_INSFORGE_URL}
+        NEXT_PUBLIC_INSFORGE_ANON_KEY: ${NEXT_PUBLIC_INSFORGE_ANON_KEY}
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+    image: data-platform-web
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+    depends_on:
+      - insforge
+    networks:
+      - insforge-network
+    # 不映射宿主机端口；仅 nginx 在内网通过 web:3000 访问
+
+  nginx:
+    image: jonasal/nginx-certbot:latest
+    restart: unless-stopped
+    environment:
+      - CERTBOT_EMAIL=${LETSENCRYPT_EMAIL}
+      # =1 使用 Let's Encrypt 测试环境（不限频、出测试证书），调试时打开
+      - STAGING=${LETSENCRYPT_STAGING:-0}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # server.conf 由 scripts/deploy.sh 从 server.conf.tpl + .env 的 DOMAIN 生成
+      - ./nginx/user_conf.d:/etc/nginx/user_conf.d:ro
+      - nginx_secrets:/etc/letsencrypt
+    depends_on:
+      - web
+      - insforge
+    networks:
+      - insforge-network
+
+volumes:
+  nginx_secrets:

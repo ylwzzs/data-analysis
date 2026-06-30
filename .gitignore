@@ -32,3 +32,6 @@ dist/
 # Logs
 *.log
 npm-debug.log*
+
+# nginx 运行时生成配置（deploy.sh 从 server.conf.tpl + DOMAIN 生成）
+deploy/nginx/user_conf.d/server.conf

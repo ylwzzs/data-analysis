@@ -17,6 +17,10 @@ export const metadata: Metadata = {
   description: "企业数据分析平台",
 };
 
+// 全站按请求 SSR：业务数据来自 InsForge，每次请求取最新值；
+// 同时避免 build 阶段静态预渲染触发对后端的 fetch（build 容器内无后端会失败）。
+export const dynamic = "force-dynamic";
+
 export default function RootLayout({
   children,
 }: Readonly<{
