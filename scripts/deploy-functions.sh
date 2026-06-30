@@ -28,7 +28,7 @@ deploy_one() {
   local slug; slug="$(basename "$dir")"
   local code_file="$dir/index.js"
   if [ ! -f "$code_file" ]; then
-    echo "  ⊘ 跳过 $slug（无 index.js）"
+    echo "  ⊘ 跳过 ${slug}（无 index.js）"
     return
   fi
 

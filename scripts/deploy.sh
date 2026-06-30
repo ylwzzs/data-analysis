@@ -29,7 +29,7 @@ ready=0
 for i in $(seq 1 30); do
   code="$(curl -s -o /dev/null -w '%{http_code}' "$API_URL/" 2>/dev/null || echo 000)"
   if [ "$code" != "000" ]; then
-    echo "  ✅ insforge 就绪（HTTP $code）"
+    echo "  ✅ insforge 就绪（HTTP ${code}）"
     ready=1
     break
   fi
@@ -60,7 +60,7 @@ echo "==== [5/5] build + 起前端与 nginx 网关 ===="
 # 由 DOMAIN 生成 nginx server.conf（替换模板里的 __DOMAIN__）
 if [ -n "${DOMAIN:-}" ]; then
   sed "s/__DOMAIN__/$DOMAIN/g" nginx/user_conf.d/server.conf.tpl > nginx/user_conf.d/server.conf
-  echo "  ✅ nginx 配置已生成（server_name $DOMAIN）"
+  echo "  ✅ nginx 配置已生成（server_name ${DOMAIN}）"
 else
   echo "  ⚠ DOMAIN 未设置，nginx server.conf 未生成 —— Let's Encrypt 签发会失败" >&2
 fi

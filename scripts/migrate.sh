@@ -24,7 +24,7 @@ if ! docker compose exec -T postgres pg_isready -U "$PGUSER" >/dev/null 2>&1; th
   exit 1
 fi
 
-echo "▶ 执行数据库迁移（$MIGRATIONS_DIR）..."
+echo "▶ 执行数据库迁移（${MIGRATIONS_DIR}）..."
 shopt -s nullglob
 for sql in "$MIGRATIONS_DIR"/*.sql; do
   name="$(basename "$sql")"
