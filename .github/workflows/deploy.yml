@@ -1,13 +1,15 @@
 # .github/workflows/deploy.yml
-# 生产自动部署：push 到 main（或手动触发）→ SSH 到服务器执行 scripts/deploy.sh。
-# 不在 CI 里 build 前端 —— NEXT_PUBLIC_INSFORGE_ANON_KEY 依赖服务器上该 InsForge 实例，
-# 故 build/migrate 都在服务器上进行，CI 只负责触发。
+# 生产部署（两段式）：
+#   1) build-and-push：构建前端镜像 → 推送到天翼云镜像服务（hookflow/data-analysis-web）
+#   2) deploy：SSH 到服务器执行 scripts/deploy.sh（git pull → 起后端 → migrate →
+#      部署 function → 从天翼云拉前端镜像 + 起 nginx）
+# 前端在 Actions 构建（NEXT_PUBLIC_INSFORGE_ANON_KEY 由 Secret 注入），服务器只拉取。
 #
 # 需在仓库 Settings → Secrets 配置：
-#   SSH_HOST      服务器公网 IP / 域名
-#   SSH_USER      SSH 登录用户（需对 DEPLOY_PATH 有写权限、且能在 docker 组里执行 docker）
-#   SSH_KEY       SSH 私钥（PEM 全文）
-#   DEPLOY_PATH   服务器上仓库克隆路径（如 /opt/data-analytics-platform）
+#   CTYUN_USERNAME / CTYUN_PASSWORD        天翼云镜像服务凭证（构建推送 + 服务器拉取）
+#   NEXT_PUBLIC_INSFORGE_URL               前端连接的后端地址（https://data.shanhaiyiguo.com）
+#   NEXT_PUBLIC_INSFORGE_ANON_KEY          InsForge 实例 anon_key（首次起后端后取，回填此处）
+#   SSH_HOST / SSH_USER / SSH_KEY / DEPLOY_PATH   服务器 SSH 访问
 name: deploy
 
 on:
@@ -15,14 +17,37 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# 同一时刻只允许一个部署任务，排队而非互相取消（避免半截部署被中断）
 concurrency:
   group: deploy-prod
   cancel-in-progress: false
 
 jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 登录天翼云镜像服务
+        uses: docker/login-action@v3
+        with:
+          registry: registry-crs-xinan1.ctyun.cn
+          username: ${{ secrets.CTYUN_USERNAME }}
+          password: ${{ secrets.CTYUN_PASSWORD }}
+
+      - name: 构建并推送前端镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: ./web
+          push: true
+          tags: registry-crs-xinan1.ctyun.cn/hookflow/data-analysis-web:latest
+          build-args: |
+            NEXT_PUBLIC_INSFORGE_URL=${{ secrets.NEXT_PUBLIC_INSFORGE_URL }}
+            NEXT_PUBLIC_INSFORGE_ANON_KEY=${{ secrets.NEXT_PUBLIC_INSFORGE_ANON_KEY }}
+            NPM_REGISTRY=https://registry.npmmirror.com
+
   deploy:
     runs-on: ubuntu-latest
+    needs: build-and-push
     steps:
       - name: SSH 到服务器执行部署
         uses: appleboy/ssh-action@v1.2.0

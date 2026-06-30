@@ -56,7 +56,7 @@ fi
 export NEXT_PUBLIC_INSFORGE_URL
 echo "  · 前端将连接 $NEXT_PUBLIC_INSFORGE_URL"
 
-echo "==== [5/5] build + 起前端与 nginx 网关 ===="
+echo "==== [5/5] 拉取前端镜像（天翼云）+ 起网关 ===="
 # 由 DOMAIN 生成 nginx server.conf（替换模板里的 __DOMAIN__）
 if [ -n "${DOMAIN:-}" ]; then
   sed "s/__DOMAIN__/$DOMAIN/g" nginx/user_conf.d/server.conf.tpl > nginx/user_conf.d/server.conf
@@ -65,7 +65,9 @@ else
   echo "  ⚠ DOMAIN 未设置，nginx server.conf 未生成 —— Let's Encrypt 签发会失败" >&2
 fi
 
-$COMPOSE up -d --build web nginx
+# 前端镜像由 GitHub Actions 构建并推送到天翼云；此处从天翼云拉取（服务器需已 docker login 天翼云）
+$COMPOSE pull web nginx
+$COMPOSE up -d web nginx
 
 echo ""
 echo "==== ✅ 部署完成 ===="
