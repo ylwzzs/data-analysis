@@ -55,9 +55,9 @@ async function checkTokenBlacklist(token: string): Promise<boolean> {
     const data = await response.json();
     return data.length > 0;
   } catch (e) {
-    // 查询失败时，默认不拦截（避免误杀正常请求）
+    // 查询失败时，默认拦截（fail-closed 安全模型）
     console.error("Blacklist check failed:", e);
-    return false;
+    return true;
   }
 }
 

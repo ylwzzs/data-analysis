@@ -40,7 +40,7 @@ async function blacklistToken(token: string) {
 
     // 写入黑名单
     const baseUrl = process.env.NEXT_PUBLIC_INSFORGE_URL || "http://localhost:7130";
-    await fetch(`${baseUrl}/rest/v1/token_blacklist`, {
+    const response = await fetch(`${baseUrl}/rest/v1/token_blacklist`, {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${token}`,
@@ -54,6 +54,11 @@ async function blacklistToken(token: string) {
         reason: "logout",
       }),
     });
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("Blacklist write failed:", response.status, errorText);
+      // Continue logout but log error
+    }
   } catch (e) {
     console.error("Blacklist token failed:", e);
   }
