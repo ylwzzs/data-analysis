@@ -277,13 +277,12 @@ middleware 检测环境
 | 优先级 | 问题 | 影响 |
 |-------|------|-----|
 | **P0（立即）** | 单点故障 | 全站不可用 |
-| **P0（立即）** | 无备份策略 | 数据丢失 |
+| **P0（立即）** | 企微通讯录未同步 | 权限控制缺少基础数据 |
 | **P0（立即）** | RLS 未启用 | 无数据隔离 |
 | **P0（立即）** | JWT 无吊销 | 离职用户 token 仍有效 |
 | **P1（短期）** | Secrets 明文注入 | 日志泄露 |
 | **P1（短期）** | 无 API 限流 | 滥用风险 |
-| **P1（短期）** | 无监控告警 | 故障无感知 |
-| **P1（短期）** | 敏感字段暴露 | 手机/邮箱无访问控制 |
+| **P1（短期）** | 无监控告警 | 故障无感知（用户已知，单点部署） |
 | **P2（中期）** | 无错误边界 | 页面崩溃 |
 | **P2（中期）** | 无 Suspense/loading | 体验差 |
 | **P2（中期）** | 缺少软删除 | 无法恢复 |
@@ -291,21 +290,23 @@ middleware 检测环境
 | **P3（长期）** | 移动端适配不足 | 小屏体验一般 |
 | **P3（长期）** | 鉴权环境检测滞后 | 混跳问题 |
 
+> **注**：基础设施风险（单点故障、无备份）已降级，用户已知权衡，暂不处理。
+
 ### 7.2 修复路线图
 
-**第一阶段：安全加固（P0）**
+**第一阶段：权限体系建设（P0）**
 
-- 启用 RLS + 数据隔离
+- 企微通讯录同步（新建 function: wecom-sync-contacts）
+- 登录时 JWT 携带部门信息
+- 报表表加 `allowed_departments` 字段
+- 启用 RLS（reports/data_files/data_sources）
 - JWT 吊销机制（黑名单表 + middleware 检查）
-- 数据库备份（pg_dump + cron）
-- 高可用方案（监控 + 快速恢复，或云托管 PostgreSQL）
 
 **第二阶段：可靠性提升（P1）**
 
 - Secrets 加密传输
 - API 限流（PostgREST PGRST_MAX_ROWS）
-- 监控告警（Prometheus/Grafana 或云监控）
-- 敏感字段脱敏
+- 敏感字段脱敏（org_users.mobile/email）
 
 **第三阶段：体验优化（P2-P3）**
 
@@ -317,16 +318,61 @@ middleware 检测环境
 
 ---
 
-## 八、关键结论
+## 九、权限限制实现方案（用户确认）
 
-> 这是一个**功能完整但安全加固不足**的 MVP 项目。认证链路已打通，但数据隔离、备份恢复、高可用等生产必备能力缺失。建议立即执行 P0 安全加固，再逐步优化体验。
+### 9.1 方案选择
+
+采用 **方案 A：RLS + 部门 ID**（数据库层强制隔离）
+
+### 9.2 核心理念
+
+```
+企微通讯录同步 → 用户归属部门
+     ↓
+登录时 JWT 携带部门信息
+     ↓
+PostgreSQL RLS 策略：按部门过滤报表
+     ↓
+数据库层强制隔离，绕过应用层也无法越权
+```
+
+### 9.3 实现步骤
+
+| 序号 | 改动 | 文件 |
+|-----|------|------|
+| 1 | 新建通讯录同步 function | `functions/wecom-sync-contacts/index.js` |
+| 2 | 登录时查询部门 + JWT 加部门 | `functions/wecom-oauth/index.js` |
+| 3 | 报表表加权限字段 | `database/migrations/004_report_permissions.sql` |
+| 4 | 启用 RLS | `database/migrations/005_rls.sql` |
+| 5 | 定时同步任务 | InsForge schedule 或 cron |
+
+### 9.4 RLS 策略示例
+
+```sql
+-- 用户只能看到自己部门有权限的报表
+CREATE POLICY reports_department_policy ON reports
+  FOR SELECT TO authenticated
+  USING (
+    allowed_departments ?| string_to_array(
+      current_setting('request.jwt.claims.departments', true),
+      ','
+    )
+    OR allowed_departments = '["*"]'::jsonb  -- 全员可见
+  );
+```
+
+---
+
+## 十、关键结论
+
+> 这是一个**功能完整但权限体系缺失**的 MVP 项目。认证链路已打通，但企微通讯录未同步、RLS 未启用，无法实现部门/员工级权限隔离。建议立即建设权限体系（通讯录同步 + RLS），再逐步优化体验。
 
 **核心改进优先级**：
-1. **立即**：RLS + JWT 吊销 + 备份
-2. **短期**：监控 + 限流 + Secrets 加密
+1. **立即**：企微通讯录同步 + RLS + JWT 吊销
+2. **短期**：限流 + Secrets 加密
 3. **中期**：错误处理 + 软删除 + 审计完善
 4. **长期**：移动端优化 + 鉴权环境检测优先化
 
 ---
 
-**下一步**：用户审阅本分析报告后，进入 writing-plans 阶段，制定详细实现计划。
+**下一步**：进入 writing-plans 阶段，制定详细实现计划。
