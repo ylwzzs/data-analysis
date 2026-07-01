@@ -1,13 +1,13 @@
 # .github/workflows/deploy.yml
-# 生产部署：GHA 只做 SSH 触发，build/push 在服务器（国内）执行 ——
-# 避开 GHA 境外 runner push 天翼云的跨境瓶颈（实测 ~30KB/s，148MB 层要近 2h）。
-# 与 tuangou 项目同链路：服务器 docker build → docker push 天翼云（国内→国内）→ compose up。
+# 生产部署：GHA 把代码 rsync 到服务器 → SSH 触发 deploy.sh（服务器 build/push）。
+# 避开两个跨境瓶颈：
+#   1) GHA 境外 runner push 天翼云(国内) ~30KB/s —— build/push 移到服务器（国内→国内）
+#   2) 服务器(国内) git pull GitHub 偶发 TLS 中断 —— 改用 GHA rsync 推代码（同 tuangou 项目）
 #
 # 链路：push main / workflow_dispatch
-#   → SSH 到服务器执行 scripts/deploy.sh
-#     → git pull → 起后端 → migrate → 部署 function
-#     → docker login 天翼云 → docker build 前端（服务器本地）→ docker push 天翼云
-#     → 生成 nginx 配置 → compose up web nginx（web 用本地 build 的镜像）
+#   → checkout → rsync 代码到服务器（排除 .git/node_modules/.next/.env）
+#   → SSH 执行 scripts/deploy.sh：起后端 → migrate → function
+#     → docker login 天翼云 → docker build 前端（服务器）→ docker push 天翼云 → compose up
 #
 # Secrets：
 #   SSH_HOST / SSH_USER / SSH_KEY / DEPLOY_PATH   服务器 SSH 访问
@@ -28,7 +28,27 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: SSH 到服务器执行部署
+      - uses: actions/checkout@v4
+
+      - name: 配置 SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: rsync 代码到服务器
+        run: |
+          rsync -avz --delete \
+            --exclude '.git' \
+            --exclude 'node_modules' \
+            --exclude '.next' \
+            --exclude '.env' \
+            -e "ssh -i ~/.ssh/deploy_key" \
+            ./web ./scripts ./database ./deploy ./functions \
+            ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.DEPLOY_PATH }}/
+
+      - name: SSH 执行部署
         uses: appleboy/ssh-action@v1.2.0
         env:
           CTYUN_USER: ${{ secrets.CTYUN_USER }}
