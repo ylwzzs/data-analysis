@@ -8,9 +8,9 @@ import { WecomLoginSuccess } from "./login-success";
 export default async function AuthCallbackPage({
   searchParams,
 }: {
-  searchParams: Promise<{ code?: string }>;
+  searchParams: Promise<{ code?: string; state?: string }>;
 }) {
-  const { code } = await searchParams;
+  const { code, state } = await searchParams;
 
   if (!code) {
     return (
@@ -49,5 +49,5 @@ export default async function AuthCallbackPage({
     );
   }
 
-  return <WecomLoginSuccess userid={data.wecom_userid} />;
+  return <WecomLoginSuccess userid={data.wecom_userid} state={state} />;
 }

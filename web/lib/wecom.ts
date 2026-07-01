@@ -3,7 +3,7 @@
 import { insforge } from "@/lib/insforge";
 
 // 构造企微授权 URL。未配置 CORPID/AGENT_ID 时返回空串（UI 可隐藏入口）。
-export function buildWecomAuthUrl(redirectUri: string, state = "insforge"): string {
+export function buildWecomAuthUrl(redirectUri: string, state = "mobile"): string {
   const corpId = process.env.NEXT_PUBLIC_WECOM_CORP_ID;
   const agentId = process.env.NEXT_PUBLIC_WECOM_AGENT_ID;
   if (!corpId || !agentId) return "";
@@ -20,7 +20,7 @@ export function buildWecomAuthUrl(redirectUri: string, state = "insforge"): stri
 
 // 构造 PC 端企微扫码登录 URL（login.work.weixin.qq.com SSO）。
 // 回调同 H5（/auth/callback），复用 wecom-oauth function 换 userid。
-export function buildWecomQrLoginUrl(redirectUri: string, state = "insforge"): string {
+export function buildWecomQrLoginUrl(redirectUri: string, state = "home"): string {
   const corpId = process.env.NEXT_PUBLIC_WECOM_CORP_ID;
   const agentId = process.env.NEXT_PUBLIC_WECOM_AGENT_ID;
   if (!corpId || !agentId) return "";
