@@ -1,9 +1,10 @@
 import Link from "next/link";
 
 import { exchangeWecomCode } from "@/lib/wecom";
+import { WecomLoginSuccess } from "./login-success";
 
 // 企微 OAuth 回调页：?code=xxx
-// 真实联调待可信回调域名就绪；当前作为框架，展示 code 换取结果。
+// server 侧用 code 调 wecom-oauth function 换 userid，client 子组件存登录态。
 export default async function AuthCallbackPage({
   searchParams,
 }: {
@@ -29,32 +30,24 @@ export default async function AuthCallbackPage({
 
   const { data, error } = await exchangeWecomCode(code);
 
-  return (
-    <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
-      <div className="bg-white rounded-lg p-6 max-w-sm">
-        <h1 className="text-lg font-semibold mb-3">企微登录</h1>
-        {error ? (
-          <div className="text-sm text-red-600">
-            登录失败：{String(error.message ?? error)}
+  if (error || !data?.ok) {
+    return (
+      <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
+        <div className="bg-white rounded-lg p-6 max-w-sm">
+          <h1 className="text-lg font-semibold mb-3">企微登录</h1>
+          <div className="text-sm text-red-600 whitespace-pre-wrap">
+            登录失败：{String((error as any)?.message ?? data?.error ?? error)}
           </div>
-        ) : (
-          <div className="text-sm space-y-1">
-            <p className="text-green-600">✓ 已识别企业微信账号</p>
-            <p className="text-muted-foreground">
-              userid: {data?.wecom_userid ?? "—"}
-            </p>
-            <p className="text-xs text-muted-foreground mt-2">
-              注：会话签发与重定向待回调域名就绪后启用。
-            </p>
-          </div>
-        )}
-        <Link
-          href="/mobile"
-          className="block mt-4 text-center text-sm text-blue-600"
-        >
-          ← 返回报表中心
-        </Link>
+          <Link
+            href="/mobile"
+            className="block mt-4 text-center text-sm text-blue-600"
+          >
+            ← 返回报表中心
+          </Link>
+        </div>
       </div>
-    </div>
-  );
+    );
+  }
+
+  return <WecomLoginSuccess userid={data.wecom_userid} />;
 }

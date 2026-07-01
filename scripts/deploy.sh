@@ -74,6 +74,9 @@ echo "  · docker build $WEB_IMAGE"
 docker build \
   --build-arg NEXT_PUBLIC_INSFORGE_URL="$NEXT_PUBLIC_INSFORGE_URL" \
   --build-arg NEXT_PUBLIC_INSFORGE_ANON_KEY="$NEXT_PUBLIC_INSFORGE_ANON_KEY" \
+  --build-arg NEXT_PUBLIC_WECOM_CORP_ID="${WECOM_CORP_ID:-}" \
+  --build-arg NEXT_PUBLIC_WECOM_AGENT_ID="${WECOM_AGENT_ID:-}" \
+  --build-arg NEXT_PUBLIC_WECOM_REDIRECT_URI="https://${DOMAIN}/auth/callback" \
   -t "$WEB_IMAGE" \
   "$ROOT/web"
 
