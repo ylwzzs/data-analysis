@@ -18,6 +18,22 @@ export function buildWecomAuthUrl(redirectUri: string, state = "insforge"): stri
   return `https://open.weixin.qq.com/connect/oauth2/authorize?${params.toString()}#wechat_redirect`;
 }
 
+// 构造 PC 端企微扫码登录 URL（login.work.weixin.qq.com SSO）。
+// 回调同 H5（/auth/callback），复用 wecom-oauth function 换 userid。
+export function buildWecomQrLoginUrl(redirectUri: string, state = "insforge"): string {
+  const corpId = process.env.NEXT_PUBLIC_WECOM_CORP_ID;
+  const agentId = process.env.NEXT_PUBLIC_WECOM_AGENT_ID;
+  if (!corpId || !agentId) return "";
+  const params = new URLSearchParams({
+    login_type: "CorpApp",
+    appid: corpId,
+    agentid: agentId,
+    redirect_uri: redirectUri,
+    state,
+  });
+  return `https://login.work.weixin.qq.com/wwlogin/sso/login?${params.toString()}`;
+}
+
 // 调用 wecom-oauth edge function，用 code 换企微 userid / 会话。
 export async function exchangeWecomCode(code: string) {
   const { data, error } = await insforge.functions.invoke("wecom-oauth", {
