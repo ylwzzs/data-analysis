@@ -56,7 +56,28 @@ fi
 export NEXT_PUBLIC_INSFORGE_URL
 echo "  · 前端将连接 $NEXT_PUBLIC_INSFORGE_URL"
 
-echo "==== [5/5] 拉取前端镜像（天翼云）+ 起网关 ===="
+echo "==== [5/5] 服务器构建前端镜像 → 推天翼云 → 起网关 ===="
+WEB_IMAGE="registry-crs-xinan1.ctyun.cn/hookflow/data-analysis-web:latest"
+
+# 登录天翼云（服务器国内 → 天翼云国内，push 快；凭证由 GHA secrets 经 SSH 注入）
+if [ -n "${CTYUN_USER:-}" ] && [ -n "${CTYUN_PASSWORD:-}" ]; then
+  echo "$CTYUN_PASSWORD" | docker login registry-crs-xinan1.ctyun.cn -u "$CTYUN_USER" --password-stdin
+  echo "  ✅ 已登录天翼云镜像服务"
+else
+  echo "  ⚠ CTYUN_USER/CTYUN_PASSWORD 未注入，跳过 push（仅本地 build）" >&2
+fi
+
+# 服务器本地 build（base 镜像走 xuanyuan.run、npm 走 npmmirror，均国内链路）
+echo "  · docker build $WEB_IMAGE"
+docker build \
+  --build-arg NEXT_PUBLIC_INSFORGE_URL="$NEXT_PUBLIC_INSFORGE_URL" \
+  --build-arg NEXT_PUBLIC_INSFORGE_ANON_KEY="$NEXT_PUBLIC_INSFORGE_ANON_KEY" \
+  -t "$WEB_IMAGE" \
+  "$ROOT/web"
+
+# 推天翼云（国内→国内）；失败不阻断 —— 本地 build 的同名镜像可直接起
+docker push "$WEB_IMAGE" || echo "  ⚠ push 天翼云失败，使用本地镜像继续"
+
 # 由 DOMAIN 生成 nginx server.conf（替换模板里的 __DOMAIN__）
 if [ -n "${DOMAIN:-}" ]; then
   sed "s/__DOMAIN__/$DOMAIN/g" nginx/user_conf.d/server.conf.tpl > nginx/user_conf.d/server.conf
@@ -65,9 +86,8 @@ else
   echo "  ⚠ DOMAIN 未设置，nginx server.conf 未生成 —— Let's Encrypt 签发会失败" >&2
 fi
 
-# 前端镜像由 GitHub Actions 构建并推送到天翼云；此处从天翼云拉取（服务器需已 docker login 天翼云）
-$COMPOSE pull web nginx
-$COMPOSE up -d web nginx
+# 起 web（用本地刚 build 的镜像，--force-recreate 确保用新镜像）+ nginx（首次自动 pull xuanyuan.run 公共镜像）
+$COMPOSE up -d --force-recreate web nginx
 
 echo ""
 echo "==== ✅ 部署完成 ===="

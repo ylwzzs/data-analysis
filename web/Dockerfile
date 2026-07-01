@@ -3,16 +3,16 @@
 # build 时通过 --build-arg 注入 NEXT_PUBLIC_INSFORGE_URL / NEXT_PUBLIC_INSFORGE_ANON_KEY：
 # NEXT_PUBLIC_* 会被内联进客户端产物，必须在 next build 之前就位（运行时改不了）。
 #
-# 构建示例：
-#   docker build \
-#     --build-arg NEXT_PUBLIC_INSFORGE_URL=https://data.example.com \
-#     --build-arg NEXT_PUBLIC_INSFORGE_ANON_KEY=anon_xxx \
-#     -t data-platform-web .
-# 实际由 deploy/docker-compose.prod.yml 的 build.args 自动注入。
+# base 镜像默认走 xuanyuan.run 代理（服务器/国内无 docker hub mirror 时必需）；
+# 海外或有 mirror 的环境可用 --build-arg NODE_IMAGE=node:22-alpine 覆盖。
+# 由 scripts/deploy.sh 在服务器上 build → push 天翼云 → compose up。
+
+# 服务器（国内）build：base 走 xuanyuan.run 代理、npm 走 npmmirror，均为国内链路。
+ARG NODE_IMAGE=caj9ik14016wep.xuanyuan.run/library/node:22-alpine
 
 # ---------- 1. deps：安装依赖 ----------
-FROM node:22-alpine AS deps
-# 国内构建走 npmmirror 加速（官方源极慢）；海外构建可用
+FROM ${NODE_IMAGE} AS deps
+# 国内构建走 npmmirror 加速（官方源极慢）；海外可用
 # --build-arg NPM_REGISTRY=https://registry.npmjs.org 覆盖
 ARG NPM_REGISTRY=https://registry.npmmirror.com
 WORKDIR /app
@@ -20,7 +20,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --registry=$NPM_REGISTRY
 
 # ---------- 2. builder：构建产物 ----------
-FROM node:22-alpine AS builder
+FROM ${NODE_IMAGE} AS builder
 ARG NPM_REGISTRY=https://registry.npmmirror.com
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
@@ -34,7 +34,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
 # ---------- 3. runner：最小运行镜像 ----------
-FROM node:22-alpine AS runner
+FROM ${NODE_IMAGE} AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
