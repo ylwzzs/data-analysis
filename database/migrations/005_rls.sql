@@ -8,14 +8,16 @@ ALTER TABLE reports ENABLE ROW LEVEL SECURITY;
 -- 策略 1：用户能看到自己部门有权限的报表
 -- allowed_departments ?| array['1','2'] 表示数组中有任一部门 ID 即可
 -- 或者 allowed_departments = '["*"]' 表示全员可见
+-- JWT departments 存储为 JSON 数组 ["1","2"]，需要用 jsonb_array_elements_text 解析
 DROP POLICY IF EXISTS reports_department_policy ON reports;
 CREATE POLICY reports_department_policy ON reports
   FOR SELECT TO authenticated
   USING (
     allowed_departments = '["*"]'::jsonb
-    OR allowed_departments ?| string_to_array(
-      current_setting('request.jwt.claims.departments', true),
-      ','
+    OR allowed_departments ?| ARRAY(
+      SELECT jsonb_array_elements_text(
+        current_setting('request.jwt.claims.departments', true)::jsonb
+      )
     )
   );
 
@@ -38,9 +40,10 @@ CREATE POLICY data_files_department_policy ON data_files
       WHERE reports.id = data_files.source_id
       AND (
         reports.allowed_departments = '["*"]'::jsonb
-        OR reports.allowed_departments ?| string_to_array(
-          current_setting('request.jwt.claims.departments', true),
-          ','
+        OR reports.allowed_departments ?| ARRAY(
+          SELECT jsonb_array_elements_text(
+            current_setting('request.jwt.claims.departments', true)::jsonb
+          )
         )
       )
     )
