@@ -62,11 +62,11 @@ echo "==== [5/5] 服务器构建前端镜像 → 推天翼云 → 起网关 ====
 WEB_IMAGE="registry-crs-xinan1.ctyun.cn/hookflow/data-analysis-web:latest"
 
 # 登录天翼云（服务器国内 → 天翼云国内，push 快；凭证由 GHA secrets 经 SSH 注入）
-if [ -n "${CTYUN_USER:-}" ] && [ -n "${CTYUN_PASSWORD:-}" ]; then
-  echo "$CTYUN_PASSWORD" | docker login registry-crs-xinan1.ctyun.cn -u "$CTYUN_USER" --password-stdin
+if [ -n "${CTYUN_USERNAME:-}" ] && [ -n "${CTYUN_PASSWORD:-}" ]; then
+  echo "$CTYUN_PASSWORD" | docker login registry-crs-xinan1.ctyun.cn -u "$CTYUN_USERNAME" --password-stdin
   echo "  ✅ 已登录天翼云镜像服务"
 else
-  echo "  ⚠ CTYUN_USER/CTYUN_PASSWORD 未注入，跳过 push（仅本地 build）" >&2
+  echo "  ⚠ CTYUN_USERNAME/CTYUN_PASSWORD 未注入，跳过 push（仅本地 build）" >&2
 fi
 
 # 服务器本地 build（base 镜像走 xuanyuan.run、npm 走 npmmirror，均国内链路）
@@ -80,9 +80,11 @@ docker build \
 # 推天翼云（国内→国内）；失败不阻断 —— 本地 build 的同名镜像可直接起
 docker push "$WEB_IMAGE" || echo "  ⚠ push 天翼云失败，使用本地镜像继续"
 
-# 由 DOMAIN 生成 nginx server.conf（替换模板里的 __DOMAIN__）
+# 由 DOMAIN 生成 nginx server.conf（模板在 nginx/server.conf.tpl，输出到 user_conf.d/）。
+# 模板绝不能留在 user_conf.d/ —— 它会被挂载进容器，certbot 会拿字面量 __DOMAIN__ 去签证书而失败。
 if [ -n "${DOMAIN:-}" ]; then
-  sed "s/__DOMAIN__/$DOMAIN/g" nginx/user_conf.d/server.conf.tpl > nginx/user_conf.d/server.conf
+  mkdir -p nginx/user_conf.d
+  sed "s/__DOMAIN__/$DOMAIN/g" nginx/server.conf.tpl > nginx/user_conf.d/server.conf
   echo "  ✅ nginx 配置已生成（server_name ${DOMAIN}）"
 else
   echo "  ⚠ DOMAIN 未设置，nginx server.conf 未生成 —— Let's Encrypt 签发会失败" >&2

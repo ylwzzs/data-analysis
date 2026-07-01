@@ -11,7 +11,7 @@
 #
 # Secrets：
 #   SSH_HOST / SSH_USER / SSH_KEY / DEPLOY_PATH   服务器 SSH 访问
-#   CTYUN_USER / CTYUN_PASSWORD                   服务器 docker login 天翼云（push 前端镜像用）
+#   CTYUN_USERNAME / CTYUN_PASSWORD               服务器 docker login 天翼云（push 前端镜像用）
 #   （NEXT_PUBLIC_INSFORGE_URL / ANON_KEY 由服务器 deploy/.env 提供，build 时注入）
 name: deploy
 
@@ -51,16 +51,16 @@ jobs:
       - name: SSH 执行部署
         uses: appleboy/ssh-action@v1.2.0
         env:
-          CTYUN_USER: ${{ secrets.CTYUN_USER }}
+          CTYUN_USERNAME: ${{ secrets.CTYUN_USERNAME }}
           CTYUN_PASSWORD: ${{ secrets.CTYUN_PASSWORD }}
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
-          envs: CTYUN_USER,CTYUN_PASSWORD
+          envs: CTYUN_USERNAME,CTYUN_PASSWORD
           script_stop: true
           command_timeout: 30m
           script: |
-            export CTYUN_USER CTYUN_PASSWORD
+            export CTYUN_USERNAME CTYUN_PASSWORD
             cd ${{ secrets.DEPLOY_PATH }}
             bash scripts/deploy.sh
