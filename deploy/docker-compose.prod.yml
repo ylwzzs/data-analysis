@@ -36,6 +36,8 @@ services:
       # server.conf 由 scripts/deploy.sh 从 server.conf.tpl + .env 的 DOMAIN 生成
       - ./nginx/user_conf.d:/etc/nginx/user_conf.d:ro
       - nginx_secrets:/etc/letsencrypt
+      # 企微可信域名验证文件（WW_verify_*.txt）
+      - ./nginx/verify:/etc/nginx/verify:ro
     depends_on:
       - web
       - insforge

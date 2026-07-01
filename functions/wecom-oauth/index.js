@@ -63,7 +63,7 @@ module.exports = async function (req) {
 
     // 3. upsert org_users（MVP：用 anon client 只读；生产应走 service role / admin）
     const client = createClient({
-      baseUrl: Deno.env.get("INSFORGE_BASE_URL"),
+      baseUrl: Deno.env.get("INSFORGE_API_BASE") || "http://insforge:7130",
       anonKey: Deno.env.get("ANON_KEY"),
     });
     await client.database.from("org_users").upsert(

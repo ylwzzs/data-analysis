@@ -48,7 +48,7 @@ module.exports = async function (req) {
 
     // 2. 读取报表数据生成摘要（createClient 全局注入）
     const client = createClient({
-      baseUrl: Deno.env.get("INSFORGE_BASE_URL"),
+      baseUrl: Deno.env.get("INSFORGE_API_BASE") || "http://insforge:7130",
       anonKey: Deno.env.get("ANON_KEY"),
     });
     const { data: reports, error } = await client.database

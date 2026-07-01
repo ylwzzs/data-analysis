@@ -69,7 +69,13 @@ set_secret() {
     echo "  · $k 未配置，跳过"
     return
   fi
-  local body; body=$(jq -n --arg k "$k" --arg v "$v" '{name:$k, value:$v}')
+  # 已存在则跳过（POST 仅新建，重复会失败；如需改值请在 dashboard 删除后重跑）
+  if curl -sf -H "$AUTH" "$API_URL/api/secrets" 2>/dev/null | \
+     jq -e --arg k "$k" '.secrets[]? | select(.key==$k)' >/dev/null 2>&1; then
+    echo "  · $k 已存在，跳过"
+    return
+  fi
+  local body; body=$(jq -n --arg k "$k" --arg v "$v" '{key:$k, value:$v}')
   if curl -sf -X POST -H "$AUTH" -H "Content-Type: application/json" \
     -d "$body" "$API_URL/api/secrets" >/dev/null; then
     echo "  ✅ $k"
@@ -80,5 +86,9 @@ set_secret() {
 set_secret "WECOM_CORP_ID" "${WECOM_CORP_ID:-}"
 set_secret "WECOM_SECRET" "${WECOM_SECRET:-}"
 set_secret "WECOM_AGENT_ID" "${WECOM_AGENT_ID:-}"
+# function 内部读报表/写审计所需（createClient 调 InsForge API + 推送卡片链接）
+set_secret "INSFORGE_BASE_URL" "${INSFORGE_BASE_URL:-http://insforge:7130}"
+set_secret "ANON_KEY" "${NEXT_PUBLIC_INSFORGE_ANON_KEY:-}"
+set_secret "REPORT_URL" "${REPORT_URL:-https://${DOMAIN:-localhost}}"
 
 echo "✅ function 部署完成"

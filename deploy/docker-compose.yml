@@ -104,6 +104,10 @@ services:
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
       - POSTGREST_BASE_URL=http://postgrest:3000
+      # function 内 createClient 访问 InsForge API 的地址（deno 容器视角 → insforge 服务）。
+      # 用 INSFORGE_API_BASE 而非 INSFORGE_BASE_URL：后者是 reserved secret（值为主服务视角的
+      # localhost:7130，function 在独立 deno 容器里连不上），reserved 会覆盖容器 env。
+      - INSFORGE_API_BASE=http://insforge:7130
       - WORKER_TIMEOUT_MS=${WORKER_TIMEOUT_MS:-60000}
       # function secrets 用此 key 解密；必须与 insforge 服务一致
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:-${JWT_SECRET:-dev-secret-please-change-in-production}}

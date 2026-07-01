@@ -22,6 +22,12 @@ server {
     # 数据导入等上传体积
     client_max_body_size 50m;
 
+    # 企微可信域名验证文件（域名根路径，由 deploy/nginx/verify/ 挂载）
+    location ~ ^/WW_verify_.*\.txt$ {
+        root /etc/nginx/verify;
+        default_type text/plain;
+    }
+
     # ---------- 前端 Next.js（默认路由，含所有页面与 /auth/callback）----------
     location / {
         proxy_pass http://web:3000;
