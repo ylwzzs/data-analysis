@@ -1,7 +1,30 @@
 // functions/wecom-sync-contacts/index.js
 // 企微通讯录同步：获取部门列表 + 用户列表，upsert 到数据库。
 // 定时执行（每日）或手动触发。
-// 所需 secrets：WECOM_CORP_ID / WECOM_SECRET
+// 所需 secrets：WECOM_CORP_ID / WECOM_SECRET / JWT_SECRET
+// 注意：InsForge OSS runtime 用 CommonJS + 全局注入（createClient、Deno）。
+// 数据写入需要 authenticated role，故用 JWT_SECRET 签临时 token。
+function b64url(bytes) {
+  let s = "";
+  for (const b of new Uint8Array(bytes)) s += String.fromCharCode(b);
+  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+async function signJwt(payload, secret) {
+  const enc = new TextEncoder();
+  const h = b64url(enc.encode(JSON.stringify({ alg: "HS256", typ: "JWT" })));
+  const p = b64url(enc.encode(JSON.stringify(payload)));
+  const data = `${h}.${p}`;
+  const key = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, enc.encode(data));
+  return `${data}.${b64url(sig)}`;
+}
+
 module.exports = async function (req) {
   const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -22,12 +45,13 @@ module.exports = async function (req) {
 
   const corpId = Deno.env.get("WECOM_CORP_ID");
   const corpSecret = Deno.env.get("WECOM_SECRET");
-  if (!corpId || !corpSecret) {
-    return json({ error: "WECOM_CORP_ID/WECOM_SECRET secrets not set" }, 500);
+  const jwtSecret = Deno.env.get("JWT_SECRET");
+  if (!corpId || !corpSecret || !jwtSecret) {
+    return json({ error: "WECOM_CORP_ID/WECOM_SECRET/JWT_SECRET secrets not set" }, 500);
   }
 
   try {
-    // 1. 获取 access_token
+    // 1. 获取企微 access_token
     const tokenRes = await fetch(
       `https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${corpId}&corpsecret=${corpSecret}`
     );
@@ -59,13 +83,20 @@ module.exports = async function (req) {
       }
     }
 
-    // 4. upsert 到数据库
+    // 4. 签临时 authenticated JWT（用于数据库写入）
+    const now = Math.floor(Date.now() / 1000);
+    const serviceToken = await signJwt(
+      { sub: "wecom-sync-contacts", role: "authenticated", iss: "wecom-sync-contacts", iat: now, exp: now + 300 },
+      jwtSecret,
+    );
+
+    // 5. upsert 到数据库（用 authenticated token）
     const client = createClient({
       baseUrl: Deno.env.get("INSFORGE_API_BASE") || "http://insforge:7130",
-      anonKey: Deno.env.get("ANON_KEY"),
+      anonKey: serviceToken,  // 用 service token 当 anonKey 传，SDK 会作为 Bearer
     });
 
-    // 4.1 同步部门
+    // 5.1 同步部门
     if (departments.length > 0) {
       const deptRows = departments.map((d) => ({
         id: String(d.id),
@@ -82,7 +113,7 @@ module.exports = async function (req) {
       }
     }
 
-    // 4.2 同步用户（去重）
+    // 5.2 同步用户（去重）
     const seen = new Set();
     const userRows = [];
     for (const u of users) {

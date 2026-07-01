@@ -86,8 +86,8 @@ set_secret() {
 set_secret "WECOM_CORP_ID" "${WECOM_CORP_ID:-}"
 set_secret "WECOM_SECRET" "${WECOM_SECRET:-}"
 set_secret "WECOM_AGENT_ID" "${WECOM_AGENT_ID:-}"
-# 通讯录同步专用 Secret（与应用 Secret 分离，避免权限冲突）
-set_secret "WECOM_CONTACTS_SECRET" "${WECOM_CONTACTS_SECRET:-}"
+# function 内部签 JWT 用（wecom-sync-contacts 需要 authenticated role 写入）
+set_secret "JWT_SECRET" "${JWT_SECRET:-}"
 # function 内部读报表/写审计所需（createClient 调 InsForge API + 推送卡片链接）
 set_secret "INSFORGE_BASE_URL" "${INSFORGE_BASE_URL:-http://insforge:7130}"
 set_secret "ANON_KEY" "${NEXT_PUBLIC_INSFORGE_ANON_KEY:-}"
