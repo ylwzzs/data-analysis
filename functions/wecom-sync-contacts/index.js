@@ -1,7 +1,7 @@
 // functions/wecom-sync-contacts/index.js
 // 企微通讯录同步：获取部门列表 + 用户列表，upsert 到数据库。
 // 定时执行（每日）或手动触发。
-// 所需 secrets：WECOM_CORP_ID / WECOM_CONTACTS_SECRET（通讯录同步专用）
+// 所需 secrets：WECOM_CORP_ID / WECOM_SECRET
 module.exports = async function (req) {
   const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -21,13 +21,13 @@ module.exports = async function (req) {
   }
 
   const corpId = Deno.env.get("WECOM_CORP_ID");
-  const corpSecret = Deno.env.get("WECOM_CONTACTS_SECRET");
+  const corpSecret = Deno.env.get("WECOM_SECRET");
   if (!corpId || !corpSecret) {
-    return json({ error: "WECOM_CORP_ID/WECOM_CONTACTS_SECRET secrets not set" }, 500);
+    return json({ error: "WECOM_CORP_ID/WECOM_SECRET secrets not set" }, 500);
   }
 
   try {
-    // 1. 获取 access_token（通讯录同步专用）
+    // 1. 获取 access_token
     const tokenRes = await fetch(
       `https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${corpId}&corpsecret=${corpSecret}`
     );
