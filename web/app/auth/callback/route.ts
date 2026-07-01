@@ -13,8 +13,14 @@ export async function GET(req: Request) {
   // H5 授权（state=mobile）回 /mobile；PC 扫码（state=home）回 next
   const target = state === "mobile" ? "/mobile" : next;
 
+  // 用 X-Forwarded-Host / Host 头构造外部 origin，避免 Next.js 把 req.url 解析成
+  // 容器内监听地址（0.0.0.0:3000）导致 redirect 的 Location 跳到内网而打不开。
+  const proto = req.headers.get("x-forwarded-proto") || "https";
+  const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || "";
+  const origin = `${proto}://${host}`;
+
   const login = (err: string) =>
-    NextResponse.redirect(new URL(`/login?error=${encodeURIComponent(err)}`, req.url));
+    NextResponse.redirect(new URL(`/login?error=${encodeURIComponent(err)}`, origin));
 
   if (!code) return login("missing_code");
 
@@ -41,5 +47,5 @@ export async function GET(req: Request) {
     maxAge: 7 * 86400,
   });
 
-  return NextResponse.redirect(new URL(target, req.url));
+  return NextResponse.redirect(new URL(target, origin));
 }
