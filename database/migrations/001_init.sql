@@ -1,6 +1,6 @@
 -- database/migrations/001_init.sql
 -- 数据分析平台数据库初始化
--- 在 PostgreSQL 容器首次启动时自动执行（挂载到 /docker-entrypoint-initdb.d）
+-- 由 scripts/migrate.sh 幂等执行：表/扩展/索引均带 IF NOT EXISTS，触发器先 DROP 再 CREATE。
 
 -- 启用扩展
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
@@ -92,14 +92,14 @@ CREATE TABLE IF NOT EXISTS query_logs (
   error_message TEXT
 );
 
--- 创建索引
-CREATE INDEX idx_data_files_source ON data_files(source_id);
-CREATE INDEX idx_data_files_ingested ON data_files(ingested_at DESC);
-CREATE INDEX idx_reports_created ON reports(created_at DESC);
-CREATE INDEX idx_query_logs_user ON query_logs(user_id);
-CREATE INDEX idx_query_logs_time ON query_logs(executed_at DESC);
+-- 创建索引（IF NOT EXISTS 保证可重复执行）
+CREATE INDEX IF NOT EXISTS idx_data_files_source ON data_files(source_id);
+CREATE INDEX IF NOT EXISTS idx_data_files_ingested ON data_files(ingested_at DESC);
+CREATE INDEX IF NOT EXISTS idx_reports_created ON reports(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_query_logs_user ON query_logs(user_id);
+CREATE INDEX IF NOT EXISTS idx_query_logs_time ON query_logs(executed_at DESC);
 
--- 创建更新时间触发器
+-- 创建更新时间触发器（PostgreSQL 的 CREATE TRIGGER 不支持 IF NOT EXISTS，先 DROP 再 CREATE）
 CREATE OR REPLACE FUNCTION update_updated_at()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -108,10 +108,12 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS update_data_sources_updated_at ON data_sources;
 CREATE TRIGGER update_data_sources_updated_at
   BEFORE UPDATE ON data_sources
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
+DROP TRIGGER IF EXISTS update_reports_updated_at ON reports;
 CREATE TRIGGER update_reports_updated_at
   BEFORE UPDATE ON reports
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
