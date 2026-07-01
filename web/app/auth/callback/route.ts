@@ -3,15 +3,18 @@ import { cookies } from "next/headers";
 
 import { exchangeWecomCode } from "@/lib/wecom";
 
-// 企微 OAuth 回调（Route Handler，可写 cookie）：?code=&state=&next=
-// code → wecom-oauth function 换 userid + access_token → 写两个 cookie → 回 next。
+/**
+ * 企微 OAuth 回调
+ * state 参数格式：URL 编码的目标路径（如 /reports/123）
+ */
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const code = url.searchParams.get("code");
-  const state = url.searchParams.get("state") || "home";
-  const next = url.searchParams.get("next") || "/";
-  // H5 授权（state=mobile）回 /mobile；PC 扫码（state=home）回 next
-  const target = state === "mobile" ? "/mobile" : next;
+  const state = url.searchParams.get("state") || "/";
+
+  // 解码 state 中的目标路径
+  const targetPath = decodeURIComponent(state);
+  const safeTarget = targetPath.startsWith("/") ? targetPath : "/";
 
   // 用 X-Forwarded-Host / Host 头构造外部 origin，避免 Next.js 把 req.url 解析成
   // 容器内监听地址（0.0.0.0:3000）导致 redirect 的 Location 跳到内网而打不开。
@@ -47,5 +50,6 @@ export async function GET(req: Request) {
     maxAge: 7 * 86400,
   });
 
-  return NextResponse.redirect(new URL(target, origin));
+  // 回跳到原路径
+  return NextResponse.redirect(new URL(safeTarget, origin));
 }
