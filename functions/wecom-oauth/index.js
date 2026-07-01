@@ -7,6 +7,29 @@
 //   https://open.weixin.qq.com/connect/oauth2/authorize?appid=${CORPID}
 //     &redirect_uri=${APP_URL}/auth/callback&response_type=code&scope=snsapi_base
 //     &state=xxx&agentid=${AGENTID}#wechat_redirect
+// HS256 JWT 签发（deno runtime 内联——InsForge function 单文件部署，无法 require 共享模块）。
+// 用 JWT_SECRET 签 role=authenticated 的 token，PostgREST 验签后切到 authenticated role。
+function b64url(bytes) {
+  let s = "";
+  for (const b of new Uint8Array(bytes)) s += String.fromCharCode(b);
+  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+async function signJwt(payload, secret) {
+  const enc = new TextEncoder();
+  const h = b64url(enc.encode(JSON.stringify({ alg: "HS256", typ: "JWT" })));
+  const p = b64url(enc.encode(JSON.stringify(payload)));
+  const data = `${h}.${p}`;
+  const key = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, enc.encode(data));
+  return `${data}.${b64url(sig)}`;
+}
+
 module.exports = async function (req) {
   const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -46,14 +69,14 @@ module.exports = async function (req) {
       `https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${corpId}&corpsecret=${corpSecret}`,
     );
     const tokenData = await tokenRes.json();
-    const accessToken = tokenData.access_token;
-    if (!accessToken) {
+    const wecomToken = tokenData.access_token;
+    if (!wecomToken) {
       return json({ error: "failed_to_get_access_token", detail: tokenData }, 502);
     }
 
     // 2. code → 企业微信 userid
     const userRes = await fetch(
-      `https://qyapi.weixin.qq.com/cgi-bin/auth/getuserinfo?access_token=${accessToken}&code=${code}`,
+      `https://qyapi.weixin.qq.com/cgi-bin/auth/getuserinfo?access_token=${wecomToken}&code=${code}`,
     );
     const userData = await userRes.json();
     const wecomUserId = userData.userid;
@@ -71,16 +94,20 @@ module.exports = async function (req) {
       { onConflict: "wecom_id" },
     );
 
-    // 4. TODO（待回调域名 + 企微组织架构 API）：
-    //    - 拉取用户姓名/部门补全 org_users
-    //    - 调用 InsForge auth 签发会话 token（custom provider / admin generate session）
-    //    - 设置 cookie 并重定向回前端，而非返回 JSON
-    return json({
-      ok: true,
-      wecom_userid: wecomUserId,
-      stage: "framework",
-      note: "session token + redirect pending callback domain setup",
-    });
+    // 4. 签发 access_token（HS256 JWT，role=authenticated；前端写入 cookie，
+    //    PostgREST 验签后切到 authenticated role 读报表）
+    const now = Math.floor(Date.now() / 1000);
+    const accessToken = await signJwt(
+      {
+        sub: wecomUserId,
+        role: "authenticated",
+        iss: "wecom-oauth",
+        iat: now,
+        exp: now + 7 * 86400,
+      },
+      Deno.env.get("JWT_SECRET"),
+    );
+    return json({ ok: true, wecom_userid: wecomUserId, access_token: accessToken });
   } catch (e) {
     return json({ error: String(e) }, 500);
   }

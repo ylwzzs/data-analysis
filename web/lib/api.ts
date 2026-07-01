@@ -1,6 +1,9 @@
 // 前端数据层：通过 InsForge PostgREST 读取业务表。
-// 对上层组件保持原有类型与函数签名不变（snake_case → camelCase 映射在此完成）。
-import { insforge } from "@/lib/insforge";
+// per-request client：从 cookie 读 access_token（登录态），用 authenticated role 读
+// （anon 已被 REVOKE SELECT，未登录拿不到）。
+// 对上层保持原有类型与函数签名（snake_case → camelCase 映射在此完成）。
+import { cookies } from "next/headers";
+import { createClient } from "@insforge/sdk";
 
 export interface Metric {
   name: string;
@@ -49,13 +52,23 @@ interface SourceRow {
   row_count: number | null;
 }
 
-// "2026-06-29T10:30:00.000Z" / "2026-06-29 10:30:00" → "2026-06-29 10:30"
 function formatTime(ts: string | null): string {
   if (!ts) return "";
   return ts.replace("T", " ").substring(0, 16);
 }
 
+async function getClient() {
+  const token = (await cookies()).get("insforge_access_token")?.value;
+  // 用 access_token（authenticated JWT）当 anonKey 传：SDK 把 anonKey 作 Authorization Bearer，
+  // PostgREST 据 JWT 的 role 切到 authenticated。token 缺失则回退 anon（已被 REVOKE SELECT，读不到）。
+  return createClient({
+    baseUrl: process.env.NEXT_PUBLIC_INSFORGE_URL!,
+    anonKey: token || process.env.NEXT_PUBLIC_INSFORGE_ANON_KEY!,
+  });
+}
+
 export async function getReports(): Promise<Report[]> {
+  const insforge = await getClient();
   const { data, error } = await insforge.database
     .from("reports")
     .select("id,name,description,updated_at,metrics");
@@ -70,6 +83,7 @@ export async function getReports(): Promise<Report[]> {
 }
 
 export async function getReport(id: string): Promise<Report | null> {
+  const insforge = await getClient();
   const { data, error } = await insforge.database
     .from("reports")
     .select("id,name,description,updated_at,metrics")
@@ -87,6 +101,7 @@ export async function getReport(id: string): Promise<Report | null> {
 }
 
 export async function getSources(): Promise<DataSource[]> {
+  const insforge = await getClient();
   const { data, error } = await insforge.database
     .from("data_sources")
     .select(

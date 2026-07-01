@@ -4,6 +4,29 @@
 // 所需 secrets：WECOM_CORP_ID / WECOM_SECRET / WECOM_AGENT_ID
 // 注意：InsForge OSS runtime 用 CommonJS + 全局注入（createClient、Deno），
 //       不要用 ESM 的 import/export。
+// HS256 JWT 签发（deno runtime 内联——InsForge function 单文件部署，无法 require 共享模块）。
+// 推送时用 role=authenticated 的 token 读 reports/写 query_logs（anon 已被 REVOKE SELECT）。
+function b64url(bytes) {
+  let s = "";
+  for (const b of new Uint8Array(bytes)) s += String.fromCharCode(b);
+  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+async function signJwt(payload, secret) {
+  const enc = new TextEncoder();
+  const h = b64url(enc.encode(JSON.stringify({ alg: "HS256", typ: "JWT" })));
+  const p = b64url(enc.encode(JSON.stringify(payload)));
+  const data = `${h}.${p}`;
+  const key = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, enc.encode(data));
+  return `${data}.${b64url(sig)}`;
+}
+
 module.exports = async function (req) {
   const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -46,10 +69,15 @@ module.exports = async function (req) {
       return json({ error: "failed_to_get_access_token", detail: tokenData }, 502);
     }
 
-    // 2. 读取报表数据生成摘要（createClient 全局注入）
+    // 2. 读取报表数据生成摘要（用 authenticated JWT；anon 已被 REVOKE SELECT）
+    const now = Math.floor(Date.now() / 1000);
+    const token = await signJwt(
+      { sub: "wecom-push", role: "authenticated", iss: "wecom-push", iat: now, exp: now + 300 },
+      Deno.env.get("JWT_SECRET"),
+    );
     const client = createClient({
       baseUrl: Deno.env.get("INSFORGE_API_BASE") || "http://insforge:7130",
-      anonKey: Deno.env.get("ANON_KEY"),
+      anonKey: token,
     });
     const { data: reports, error } = await client.database
       .from("reports")

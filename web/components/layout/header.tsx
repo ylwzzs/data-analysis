@@ -1,21 +1,13 @@
-"use client";
+import { cookies } from "next/headers";
 
-import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { buildWecomQrLoginUrl } from "@/lib/wecom";
+import { LogoutButton } from "@/components/layout/logout-button";
 
-// 扫码 URL：NEXT_PUBLIC_* 在 build 时内联，SSR 即可算出（不依赖 client 的 location）。
-const LOGIN_URL = buildWecomQrLoginUrl(
-  process.env.NEXT_PUBLIC_WECOM_REDIRECT_URI || "",
-);
-
-export function Header() {
-  // userid 走 localStorage（仅 client），SSR 为 null → 首屏先显示登录按钮，挂载后切换。
-  const [userid, setUserid] = useState<string | null>(null);
-  useEffect(() => {
-    setUserid(localStorage.getItem("wecom_userid"));
-  }, []);
+// Header（server component）：在受保护页渲染，此时一定已登录（middleware 已拦截未登录）。
+// 读 wecom_userid cookie（非 httpOnly）展示身份 + 退出按钮。
+export async function Header() {
+  const userid = (await cookies()).get("wecom_userid")?.value;
 
   return (
     <header className="border-b bg-white">
@@ -34,14 +26,9 @@ export function Header() {
               <div className="w-8 h-8 rounded-full bg-blue-500 text-white flex items-center justify-center text-sm font-medium">
                 {userid[0]?.toUpperCase()}
               </div>
+              <LogoutButton />
             </div>
-          ) : LOGIN_URL ? (
-            <a href={LOGIN_URL}>
-              <Button size="sm">企微扫码登录</Button>
-            </a>
-          ) : (
-            <div className="w-8 h-8 rounded-full bg-gray-200" />
-          )}
+          ) : null}
         </div>
       </div>
     </header>
