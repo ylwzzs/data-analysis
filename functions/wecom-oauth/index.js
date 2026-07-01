@@ -84,23 +84,34 @@ module.exports = async function (req) {
       return json({ error: "failed_to_get_userid", detail: userData }, 401);
     }
 
-    // 3. upsert org_users（MVP：用 anon client 只读；生产应走 service role / admin）
+    // 3. upsert org_users + 查询部门信息
     const client = createClient({
       baseUrl: Deno.env.get("INSFORGE_API_BASE") || "http://insforge:7130",
       anonKey: Deno.env.get("ANON_KEY"),
     });
+
+    // 先尝试 upsert（确保用户存在）
     await client.database.from("org_users").upsert(
       { wecom_id: wecomUserId },
       { onConflict: "wecom_id" },
     );
 
-    // 4. 签发 access_token（HS256 JWT，role=authenticated；前端写入 cookie，
-    //    PostgREST 验签后切到 authenticated role 读报表）
+    // 查询用户的部门信息
+    const { data: user, error: userError } = await client.database
+      .from("org_users")
+      .select("department_ids")
+      .eq("wecom_id", wecomUserId)
+      .single();
+
+    const departmentIds = user?.department_ids || [];
+
+    // 4. 签发 access_token（role=authenticated，携带部门信息）
     const now = Math.floor(Date.now() / 1000);
     const accessToken = await signJwt(
       {
         sub: wecomUserId,
         role: "authenticated",
+        departments: departmentIds,  // 新增：部门 ID 数组
         iss: "wecom-oauth",
         iat: now,
         exp: now + 7 * 86400,
