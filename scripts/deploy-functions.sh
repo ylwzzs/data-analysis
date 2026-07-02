@@ -85,7 +85,6 @@ set_secret() {
 }
 set_secret "WECOM_CORP_ID" "${WECOM_CORP_ID:-}"
 set_secret "WECOM_SECRET" "${WECOM_SECRET:-}"
-set_secret "WECOM_CONTACT_SECRET" "${WECOM_CONTACT_SECRET:-}"
 set_secret "WECOM_AGENT_ID" "${WECOM_AGENT_ID:-}"
 # function 内部签 JWT 用（wecom-sync-contacts/webhook 需要 authenticated role 写入）
 set_secret "JWT_SECRET" "${JWT_SECRET:-}"
