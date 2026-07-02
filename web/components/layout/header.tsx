@@ -1,13 +1,18 @@
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { LogoutButton } from "@/components/layout/logout-button";
+import { isWecomClient } from "@/lib/device";
 
 // Header（server component）：在受保护页渲染，此时一定已登录（middleware 已拦截未登录）。
 // 读 wecom_userid cookie（非 httpOnly）展示身份 + 退出按钮。
+// 企微客户端内隐藏退出按钮（不允许退出）。
 export async function Header() {
   const userid = (await cookies()).get("wecom_userid")?.value;
+  const headersList = await headers();
+  const ua = headersList.get("user-agent") || "";
+  const isWecom = isWecomClient(ua);
 
   return (
     <header className="border-b bg-white">
@@ -26,7 +31,8 @@ export async function Header() {
               <div className="w-8 h-8 rounded-full bg-blue-500 text-white flex items-center justify-center text-sm font-medium">
                 {userid[0]?.toUpperCase()}
               </div>
-              <LogoutButton />
+              {/* 企微客户端内隐藏退出按钮 */}
+              {!isWecom && <LogoutButton />}
             </div>
           ) : null}
         </div>

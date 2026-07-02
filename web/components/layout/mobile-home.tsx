@@ -1,8 +1,9 @@
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 
 import { Badge } from "@/components/ui/badge";
 import { LogoutButton } from "@/components/layout/logout-button";
 import { ReportCard } from "@/components/mobile/report-card";
+import { isWecomClient } from "@/lib/device";
 import type { Report } from "@/lib/api";
 
 interface MobileHomePageProps {
@@ -11,6 +12,9 @@ interface MobileHomePageProps {
 
 export async function MobileHomePage({ reports }: MobileHomePageProps) {
   const userid = (await cookies()).get("wecom_userid")?.value;
+  const headersList = await headers();
+  const ua = headersList.get("user-agent") || "";
+  const isWecom = isWecomClient(ua);
 
   return (
     <div className="min-h-screen flex flex-col bg-gray-50">
@@ -23,7 +27,8 @@ export async function MobileHomePage({ reports }: MobileHomePageProps) {
           {userid ? (
             <>
               <span className="text-sm text-muted-foreground">{userid}</span>
-              <LogoutButton />
+              {/* 企微客户端内隐藏退出按钮 */}
+              {!isWecom && <LogoutButton />}
             </>
           ) : null}
         </div>
