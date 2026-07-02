@@ -20,17 +20,19 @@ export default async function ReportPage({ params }: PageProps) {
     notFound();
   }
 
-  // 设备类型检测（layout 处理布局，这里只决定渲染哪个组件）
+  // 设备类型检测：只读取 middleware 注入的 header（最可靠）
   const headersList = await headers();
   const deviceFromHeader = headersList.get("x-device-type");
-  const cookiesList = await cookies();
-  const deviceFromCookie = cookiesList.get("device_type")?.value;
-  const ua = headersList.get("user-agent") || "";
 
-  const isMobile =
-    deviceFromHeader === "mobile" ||
-    deviceFromCookie === "mobile" ||
-    isMobileDevice(ua);
+  let isMobile = deviceFromHeader === "mobile";
+
+  // 如果 header 不存在（首次访问或非 middleware 覆盖的路由），fallback 到 cookie + UA
+  if (!deviceFromHeader) {
+    const cookiesList = await cookies();
+    const deviceFromCookie = cookiesList.get("device_type")?.value;
+    const ua = headersList.get("user-agent") || "";
+    isMobile = deviceFromCookie === "mobile" || isMobileDevice(ua);
+  }
 
   return isMobile ? (
     <MobileReportDetail report={report} />

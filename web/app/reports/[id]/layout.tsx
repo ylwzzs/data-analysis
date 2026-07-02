@@ -15,21 +15,19 @@ export default async function ReportDetailLayout({
 }: {
   children: React.ReactNode;
 }) {
-  // 优先读取 middleware 注入的请求头
+  // 只读取 middleware 注入的请求头（最可靠，避免闪烁）
   const headersList = await headers();
   const deviceFromHeader = headersList.get("x-device-type");
 
-  // 其次读取 cookie
-  const cookiesList = await cookies();
-  const deviceFromCookie = cookiesList.get("device_type")?.value;
+  // 如果 header 不存在，才 fallback 到 cookie + UA（首次访问场景）
+  let isMobile = deviceFromHeader === "mobile";
 
-  // 最后 fallback 到 UA 检测
-  const ua = headersList.get("user-agent") || "";
-
-  const isMobile =
-    deviceFromHeader === "mobile" ||
-    deviceFromCookie === "mobile" ||
-    isMobileDevice(ua);
+  if (!deviceFromHeader) {
+    const cookiesList = await cookies();
+    const deviceFromCookie = cookiesList.get("device_type")?.value;
+    const ua = headersList.get("user-agent") || "";
+    isMobile = deviceFromCookie === "mobile" || isMobileDevice(ua);
+  }
 
   // 移动端：全屏布局，无 Sidebar
   if (isMobile) {
