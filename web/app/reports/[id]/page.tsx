@@ -1,4 +1,3 @@
-import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 
 import { Header } from "@/components/layout/header";
@@ -6,7 +5,7 @@ import { Sidebar } from "@/components/layout/sidebar";
 import { DesktopReportDetail } from "@/components/reports/desktop-detail";
 import { MobileReportDetail } from "@/components/reports/mobile-detail";
 import { getReport } from "@/lib/api";
-import { isMobileDevice } from "@/lib/device";
+import { getDeviceType } from "@/lib/get-device-type";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -14,9 +13,7 @@ interface PageProps {
 
 export default async function ReportPage({ params }: PageProps) {
   const { id } = await params;
-  const headersList = await headers();
-  const ua = headersList.get("user-agent") || "";
-  const isMobile = isMobileDevice(ua);
+  const deviceType = await getDeviceType();
 
   const report = await getReport(id);
 
@@ -25,7 +22,7 @@ export default async function ReportPage({ params }: PageProps) {
   }
 
   // 移动端：全屏布局，无 Sidebar
-  if (isMobile) {
+  if (deviceType === "mobile") {
     return (
       <div className="min-h-screen bg-gray-50">
         <Header />

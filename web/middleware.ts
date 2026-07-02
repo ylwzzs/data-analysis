@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { isWecomClient } from "@/lib/device";
+import { isWecomClient, isMobileDevice } from "@/lib/device";
 
 // 企微 OAuth 授权 URL 构建
 function buildWecomAuthUrl(redirectUri: string, state: string): string {
@@ -22,18 +22,48 @@ function buildWecomAuthUrl(redirectUri: string, state: string): string {
 /**
  * 路由保护 middleware
  * 核心逻辑：环境检测优先于登录检测
+ * 同时记录设备类型到 cookie，避免后续页面布局闪烁
  */
 export async function middleware(req: NextRequest) {
   const ua = req.headers.get("user-agent")?.toLowerCase() || "";
   const isWecom = isWecomClient(ua);
 
-  // 1. 企微客户端内：自动静默授权
-  if (isWecom) {
-    return handleWecomClient(req);
+  // 检测设备类型（优先读取 cookie，没有则检测 UA）
+  const deviceTypeCookie = req.cookies.get("device_type")?.value;
+  let isMobile: boolean;
+
+  if (deviceTypeCookie === "mobile") {
+    isMobile = true;
+  } else if (deviceTypeCookie === "desktop") {
+    isMobile = false;
+  } else {
+    // 首次访问，检测 UA 并写入 cookie
+    isMobile = isMobileDevice(ua);
   }
 
-  // 2. 企微客户端外：原有登录检查逻辑
-  return handleRegularBrowser(req);
+  // 创建响应对象（用于写入 cookie）
+  let response: NextResponse;
+
+  // 1. 企微客户端内：自动静默授权
+  if (isWecom) {
+    response = await handleWecomClient(req);
+  } else {
+    // 2. 企微客户端外：原有登录检查逻辑
+    response = await handleRegularBrowser(req);
+  }
+
+  // 如果首次访问（没有 device_type cookie），写入设备类型
+  if (!deviceTypeCookie) {
+    response.cookies.set("device_type", isMobile ? "mobile" : "desktop", {
+      httpOnly: false,  // client 可读
+      secure: true,
+      sameSite: "lax",
+      path: "/",
+      maxAge: 30 * 86400,  // 30天有效
+    });
+  }
+
+  return response;
 }
 
 /**
