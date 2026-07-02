@@ -1,20 +1,13 @@
 {
-  // OpenClaw 配置文件
-  // 数据分析企微机器人助手
-
   // Gateway 配置（必须）
   gateway: {
     mode: "local",
     bind: "lan",
     port: 18789,
-    controlUi: {
-      allowedOrigins: ["http://localhost:18789", "http://127.0.0.1:18789"],
-    },
   },
 
-  // 模型配置：自定义 wishub 提供商（OpenAI 协议兼容）
+  // 模型配置
   models: {
-    mode: "merge",
     providers: {
       "wishub": {
         baseUrl: "https://wishub-x6.ctyun.cn/v1",
@@ -24,38 +17,19 @@
           {
             id: "DeepSeek-V4-Flash",
             name: "DeepSeek V4 Flash",
-            reasoning: false,
-            input: ["text", "image"],
+            input: ["text"],
             contextWindow: 128000,
             maxTokens: 8192,
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
           },
         ],
       },
     },
   },
 
-  // Agent 默认配置
+  // 默认模型
   agents: {
     defaults: {
-      model: {
-        primary: "wishub/DeepSeek-V4-Flash",
-      },
-      workspace: "/home/node/.openclaw/workspace",
-      systemPrompt: "你是数据分析助手，帮助用户查询业务数据。\n\n工作流程：\n1. 收到用户问题后，先调用 get_user_permissions 工具获取用户权限\n2. 调用 get_table_schema 工具获取可用表结构\n3. 根据用户问题和权限生成 SQL（只允许 SELECT）\n4. 调用 execute_query 工具执行查询\n5. 调用 save_audit_log 工具记录审计日志\n6. 将结果以友好的方式返回给用户\n\n权限规则：\n- 用户只能查看其权限范围内的地区数据\n- 必须在 SQL 中注入权限过滤条件\n- 自动添加时间范围限制\n- 自动添加 LIMIT\n\n回复格式：\n- 用简洁的中文回复\n- 数据结果用表格形式展示\n- 如果查询失败，友好提示用户",
+      model: "wishub/DeepSeek-V4-Flash",
     },
-  },
-
-  // 工具配置
-  tools: {
-    profile: "coding",
-    allow: [
-      "bash",
-      "read",
-      "write",
-      "edit",
-      "web_search",
-      "web_fetch",
-    ],
   },
 }
