@@ -51,6 +51,7 @@ async function handleWecomClient(req: NextRequest) {
       const response = NextResponse.redirect(new URL("/login", req.url));
       response.cookies.delete("insforge_access_token");
       response.cookies.delete("wecom_userid");
+      response.cookies.delete("wecom_name");
       return response;
     }
     // Token 有效，放行
@@ -94,6 +95,7 @@ async function handleRegularBrowser(req: NextRequest) {
     const response = NextResponse.redirect(new URL("/login", req.url));
     response.cookies.delete("insforge_access_token");
     response.cookies.delete("wecom_userid");
+    response.cookies.delete("wecom_name");
     return response;
   }
 

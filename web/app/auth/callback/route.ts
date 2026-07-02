@@ -33,10 +33,13 @@ export async function GET(req: Request) {
   }
 
   const c = await cookies();
+  // 判断是否为 HTTPS（根据 x-forwarded-proto）
+  const isHttps = proto === "https";
+
   // httpOnly：server（middleware + api.ts）鉴权用，client 读不到
   c.set("insforge_access_token", data.access_token, {
     httpOnly: true,
-    secure: true,
+    secure: isHttps,  // 仅 HTTPS 下启用 secure
     sameSite: "lax",
     path: "/",
     maxAge: 7 * 86400,
@@ -44,7 +47,7 @@ export async function GET(req: Request) {
   // 非 httpOnly：Header（client）展示登录态用
   c.set("wecom_userid", data.wecom_userid, {
     httpOnly: false,
-    secure: true,
+    secure: isHttps,  // 仅 HTTPS 下启用 secure
     sameSite: "lax",
     path: "/",
     maxAge: 7 * 86400,
@@ -53,7 +56,7 @@ export async function GET(req: Request) {
   if (data.wecom_name) {
     c.set("wecom_name", data.wecom_name, {
       httpOnly: false,
-      secure: true,
+      secure: isHttps,  // 仅 HTTPS 下启用 secure
       sameSite: "lax",
       path: "/",
       maxAge: 7 * 86400,
