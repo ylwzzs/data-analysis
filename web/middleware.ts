@@ -22,7 +22,7 @@ function buildWecomAuthUrl(redirectUri: string, state: string): string {
 /**
  * 路由保护 middleware
  * 核心逻辑：环境检测优先于登录检测
- * 同时记录设备类型到 cookie，避免后续页面布局闪烁
+ * 同时在请求头注入设备类型，避免后续页面布局闪烁
  */
 export async function middleware(req: NextRequest) {
   const ua = req.headers.get("user-agent")?.toLowerCase() || "";
@@ -30,36 +30,38 @@ export async function middleware(req: NextRequest) {
 
   // 检测设备类型（优先读取 cookie，没有则检测 UA）
   const deviceTypeCookie = req.cookies.get("device_type")?.value;
-  let isMobile: boolean;
+  const isMobile = deviceTypeCookie === "mobile" ||
+    (!deviceTypeCookie && isMobileDevice(ua));
 
-  if (deviceTypeCookie === "mobile") {
-    isMobile = true;
-  } else if (deviceTypeCookie === "desktop") {
-    isMobile = false;
-  } else {
-    // 首次访问，检测 UA 并写入 cookie
-    isMobile = isMobileDevice(ua);
-  }
+  // 创建新请求，注入设备类型到请求头
+  const newHeaders = new Headers(req.headers);
+  newHeaders.set("x-device-type", isMobile ? "mobile" : "desktop");
 
-  // 创建响应对象（用于写入 cookie）
+  const newReq = new NextRequest(req.url, {
+    headers: newHeaders,
+    method: req.method,
+    body: req.body,
+  });
+
+  // 创建响应对象
   let response: NextResponse;
 
   // 1. 企微客户端内：自动静默授权
   if (isWecom) {
-    response = await handleWecomClient(req);
+    response = await handleWecomClient(newReq);
   } else {
     // 2. 企微客户端外：原有登录检查逻辑
-    response = await handleRegularBrowser(req);
+    response = await handleRegularBrowser(newReq);
   }
 
   // 如果首次访问（没有 device_type cookie），写入设备类型
   if (!deviceTypeCookie) {
     response.cookies.set("device_type", isMobile ? "mobile" : "desktop", {
-      httpOnly: false,  // client 可读
+      httpOnly: false,
       secure: true,
       sameSite: "lax",
       path: "/",
-      maxAge: 30 * 86400,  // 30天有效
+      maxAge: 30 * 86400,
     });
   }
 
