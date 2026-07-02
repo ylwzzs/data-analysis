@@ -15,39 +15,66 @@ const INSFORGE_URL = Deno.env.get('INSFORGE_URL') || 'http://localhost:7130';
 const INSFORGE_ANON_KEY = Deno.env.get('INSFORGE_ANON_KEY');
 
 module.exports = async function(req) {
+  // CORS headers
+  const corsHeaders = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+  };
+
+  // Handle OPTIONS preflight
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers: corsHeaders });
+  }
+
   try {
     // 1. 验证 API Key
     const authHeader = req.headers.get('authorization');
     const apiKey = authHeader?.replace('Bearer ', '');
 
     if (apiKey !== AGENT_API_KEY) {
-      return Response.json({ error: 'Unauthorized' }, { status: 401 });
+      return Response.json({ error: 'Unauthorized' }, { status: 401, headers: corsHeaders });
     }
 
     // 2. 解析请求
     const body = await req.json();
     const { query, userId } = body;
 
+    // 3. 输入验证
     if (!query || !userId) {
       return Response.json({
         error: 'Missing query or userId'
-      }, { status: 400 });
+      }, { status: 400, headers: corsHeaders });
+    }
+
+    // 验证 userId 格式（非空、长度限制、防止注入）
+    if (typeof userId !== 'string' || userId.length === 0 || userId.length > 100) {
+      return Response.json({
+        error: 'Invalid userId format'
+      }, { status: 400, headers: corsHeaders });
+    }
+
+    // 验证 query 格式（非空、长度限制）
+    if (typeof query !== 'string' || query.length === 0 || query.length > 5000) {
+      return Response.json({
+        error: 'Invalid query format'
+      }, { status: 400, headers: corsHeaders });
     }
 
     console.log(`[agent-query] userId=${userId}, query="${query}"`);
 
-    // 3. 查询用户信息 + 权限
+    // 4. 查询用户信息 + 权限
     const userInfo = await getUserInfo(userId);
     if (!userInfo) {
       return Response.json({
         error: '用户未同步，请先登录数据分析平台'
-      }, { status: 403 });
+      }, { status: 403, headers: corsHeaders });
     }
 
-    // 4. 获取表结构元数据
+    // 5. 获取表结构元数据
     const tablesMeta = await getTablesMeta();
 
-    // 5. LLM 生成 SQL
+    // 6. LLM 生成 SQL
     const { sql, explanation } = await generateSQL(query, {
       tables: tablesMeta,
       permissions: userInfo.permissions
@@ -55,15 +82,20 @@ module.exports = async function(req) {
 
     console.log(`[agent-query] generated SQL: ${sql}`);
 
-    // 6. 权限注入（双重保障）
+    // 7. SQL 安全验证（确保是 SELECT）
+    if (!isSafeSQL(sql)) {
+      throw new Error('Generated SQL is not a safe SELECT query');
+    }
+
+    // 8. 权限注入（双重保障）
     const safeSQL = injectPermissions(sql, userInfo.permissions);
 
-    // 7. 执行查询
+    // 9. 执行查询
     const startTime = Date.now();
     const { result, dataSource } = await executeQuery(safeSQL);
     const executionTime = Date.now() - startTime;
 
-    // 8. 审计日志
+    // 10. 审计日志
     await saveAuditLog({
       userId,
       userName: userInfo.name,
@@ -75,7 +107,7 @@ module.exports = async function(req) {
       executionTimeMs: executionTime
     });
 
-    // 9. 返回结果
+    // 11. 返回结果
     return Response.json({
       success: true,
       data: result,
@@ -85,13 +117,13 @@ module.exports = async function(req) {
         rowsReturned: result.length,
         executionTimeMs: executionTime
       }
-    });
+    }, { headers: corsHeaders });
 
   } catch (error) {
     console.error('[agent-query] Error:', error);
     return Response.json({
       error: error.message
-    }, { status: 500 });
+    }, { status: 500, headers: corsHeaders });
   }
 };
 
@@ -99,7 +131,9 @@ module.exports = async function(req) {
  * 查询用户信息和权限
  */
 async function getUserInfo(userId) {
-  const response = await fetch(`${INSFORGE_URL}/rest/v1/org_users?wecom_id=eq.${userId}&select=id,wecom_id,name,department_ids`, {
+  // URL encode userId 防止注入
+  const encodedUserId = encodeURIComponent(userId);
+  const response = await fetch(`${INSFORGE_URL}/rest/v1/org_users?wecom_id=eq.${encodedUserId}&select=id,wecom_id,name,department_ids`, {
     headers: {
       'Authorization': `Bearer ${INSFORGE_ANON_KEY}`,
       'Content-Type': 'application/json'
@@ -225,14 +259,77 @@ ${JSON.stringify(context.tables, null, 2)}
     })
   });
 
+  // 检查 Claude API 响应
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Claude API error: ${response.status} - ${errorText}`);
+  }
+
   const result = await response.json();
+
+  // 验证响应结构
+  if (!result.content || !Array.isArray(result.content) || result.content.length === 0) {
+    throw new Error('Invalid Claude API response structure');
+  }
+
   const content = result.content[0].text;
 
   // 解析 JSON（可能被 ```json 包裹）
   const jsonMatch = content.match(/```json\n([\s\S]+?)\n```/) || content.match(/\{[\s\S]+\}/);
-  const parsed = JSON.parse(jsonMatch[1] || jsonMatch[0]);
+  if (!jsonMatch) {
+    throw new Error('Failed to parse JSON from Claude response');
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(jsonMatch[1] || jsonMatch[0]);
+  } catch (e) {
+    throw new Error(`Failed to parse JSON: ${e.message}`);
+  }
+
+  // 验证解析结果
+  if (!parsed.sql || typeof parsed.sql !== 'string') {
+    throw new Error('Generated SQL is missing or invalid');
+  }
 
   return parsed;
+}
+
+/**
+ * SQL 安全验证
+ */
+function isSafeSQL(sql) {
+  const upperSQL = sql.toUpperCase().trim();
+
+  // 必须以 SELECT 开头
+  if (!upperSQL.startsWith('SELECT')) {
+    return false;
+  }
+
+  // 禁止危险关键字
+  const forbiddenKeywords = [
+    'INSERT', 'UPDATE', 'DELETE', 'DROP', 'CREATE', 'ALTER',
+    'TRUNCATE', 'EXEC', 'EXECUTE', 'GRANT', 'REVOKE'
+  ];
+
+  for (const keyword of forbiddenKeywords) {
+    // 检查完整单词（防止 SELECT...DELETED 这种误判）
+    const regex = new RegExp(`\\b${keyword}\\b`);
+    if (regex.test(upperSQL)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/**
+ * SQL 字符串转义（防止注入）
+ */
+function escapeSQLString(str) {
+  if (typeof str !== 'string') return str;
+  // 转义单引号
+  return str.replace(/'/g, "''");
 }
 
 /**
@@ -241,14 +338,18 @@ ${JSON.stringify(context.tables, null, 2)}
 function injectPermissions(sql, permissions) {
   const conditions = [];
 
-  // 地区过滤
+  // 地区过滤（使用转义防止 SQL 注入）
   if (!permissions.regions.includes('*')) {
-    const regionList = permissions.regions.map(r => `'${r}'`).join(',');
-    conditions.push(`region IN (${regionList})`);
+    const escapedRegions = permissions.regions.map(r => `'${escapeSQLString(r)}'`).join(',');
+    conditions.push(`region IN (${escapedRegions})`);
   }
 
-  // 时间范围
-  conditions.push(`date >= CURRENT_DATE - ${permissions.maxHistoryDays}`);
+  // 时间范围（确保是数字）
+  const maxHistoryDays = parseInt(permissions.maxHistoryDays, 10);
+  if (isNaN(maxHistoryDays) || maxHistoryDays < 0) {
+    throw new Error('Invalid maxHistoryDays');
+  }
+  conditions.push(`date >= CURRENT_DATE - ${maxHistoryDays}`);
 
   // 构建安全 SQL
   const upperSQL = sql.toUpperCase();
