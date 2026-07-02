@@ -44,11 +44,21 @@ module.exports = async function (req) {
   }
 
   const corpId = Deno.env.get("WECOM_CORP_ID");
-  // 优先使用通讯录同步 Secret（可读取全部通讯录），fallback 到应用 Secret
-  const corpSecret = Deno.env.get("WECOM_CONTACT_SECRET") || Deno.env.get("WECOM_SECRET");
+  // 使用应用 Secret（通讯录同步 Secret IP 白名单限制）
+  const corpSecret = Deno.env.get("WECOM_SECRET");
   const jwtSecret = Deno.env.get("JWT_SECRET");
+
+  // 调试：检查 secrets 是否正确加载
+  const debugInfo = {
+    hasCorpId: !!corpId,
+    hasSecret: !!corpSecret,
+    secretPrefix: corpSecret ? corpSecret.substring(0, 8) + "..." : null,
+    hasJwtSecret: !!jwtSecret
+  };
+  console.log("Secrets loaded:", JSON.stringify(debugInfo));
+
   if (!corpId || !corpSecret || !jwtSecret) {
-    return json({ error: "WECOM_CORP_ID/WECOM_CONTACT_SECRET(or WECOM_SECRET)/JWT_SECRET secrets not set" }, 500);
+    return json({ error: "WECOM_CORP_ID/WECOM_SECRET/JWT_SECRET secrets not set", debug: debugInfo }, 500);
   }
 
   try {
