@@ -22,6 +22,26 @@ services:
       - insforge-network
     # 不映射宿主机端口；仅 nginx 在内网通过 web:3000 访问
 
+  # openclaw Agent 服务
+  openclaw:
+    image: openclaw/openclaw:latest
+    container_name: deploy-openclaw-1
+    restart: unless-stopped
+    volumes:
+      - ../openclaw/config.yaml:/app/config.yaml:ro
+      - ../openclaw/.env:/app/.env:ro
+    environment:
+      - LLM_API_KEY=${LLM_API_KEY}
+    depends_on:
+      - insforge
+    networks:
+      - insforge-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
   nginx:
     image: caj9ik14016wep.xuanyuan.run/jonasal/nginx-certbot:latest
     restart: unless-stopped
@@ -41,6 +61,7 @@ services:
     depends_on:
       - web
       - insforge
+      - openclaw
     networks:
       - insforge-network
 

@@ -1,0 +1,113 @@
+# 企业微信机器人配置
+adapters:
+  - type: wecom
+    name: data-assistant
+    config:
+      corp_id: ${WECOM_CORP_ID}
+      agent_id: ${WECOM_AGENT_ID}
+      secret: ${WECOM_SECRET}
+      token: ${WECOM_TOKEN}
+      encoding_aes_key: ${WECOM_ENCODING_AES_KEY}
+
+# Webhook 路径
+webhook:
+  path: /webhook/wecom
+  port: 8000
+
+# 工具配置
+tools:
+  # 工具1：查询用户权限
+  - name: get_user_permissions
+    description: 根据 userId 查询用户权限信息
+    type: http
+    config:
+      url: http://deploy-insforge-1:7130/rest/v1/rpc/get_user_permissions
+      method: POST
+      headers:
+        Authorization: Bearer ${INSFORGE_ANON_KEY}
+        Content-Type: application/json
+      body_template: |
+        { "user_id": "{{from_user_id}}" }
+
+  # 工具2：获取表结构元数据
+  - name: get_table_schema
+    description: 获取可用表的字段信息
+    type: http
+    config:
+      url: http://deploy-insforge-1:7130/rest/v1/data_sources_meta
+      method: GET
+      headers:
+        Authorization: Bearer ${INSFORGE_ANON_KEY}
+
+  # 工具3：执行 SQL 查询
+  - name: execute_query
+    description: 执行 SQL 查询并返回结果
+    type: http
+    config:
+      url: http://deploy-insforge-1:7130/rest/v1/rpc/execute_sql
+      method: POST
+      headers:
+        Authorization: Bearer ${INSFORGE_ANON_KEY}
+        Content-Type: application/json
+      body_template: |
+        { "query": "{{sql}}" }
+
+  # 工具4：保存审计日志
+  - name: save_audit_log
+    description: 保存查询审计日志
+    type: http
+    config:
+      url: http://deploy-insforge-1:7130/rest/v1/agent_query_logs
+      method: POST
+      headers:
+        Authorization: Bearer ${INSFORGE_ANON_KEY}
+        Content-Type: application/json
+        Prefer: return=minimal
+      body_template: |
+        {
+          "user_id": "{{user_id}}",
+          "user_name": "{{user_name}}",
+          "query_text": "{{query_text}}",
+          "generated_sql": "{{sql}}",
+          "rows_returned": {{rows_returned}},
+          "execution_time_ms": {{execution_time_ms}}
+        }
+
+# 系统提示词
+system_prompt: |
+  你是数据分析助手，帮助用户查询业务数据。
+
+  ## 工作流程
+  1. 收到用户问题后，先调用 get_user_permissions 获取用户权限
+  2. 调用 get_table_schema 获取可用表结构
+  3. 根据用户问题和权限生成 SQL（只允许 SELECT）
+  4. 调用 execute_query 执行查询
+  5. 调用 save_audit_log 记录审计日志
+  6. 将结果以友好的方式返回给用户
+
+  ## 权限规则
+  - 用户只能查看其权限范围内的地区数据
+  - 必须在 SQL 中注入权限过滤条件
+  - 自动添加时间范围限制（根据用户权限的 max_history_days）
+  - 自动添加 LIMIT（根据用户权限的 max_rows）
+
+  ## SQL 生成规则
+  1. 只生成 SELECT 查询，禁止 INSERT/UPDATE/DELETE
+  2. 使用标准 SQL 语法（PostgreSQL 兼容）
+  3. 自动添加 LIMIT 子句
+  4. 权限过滤条件：
+     - 如果用户权限 regions 不包含 "*"，添加 WHERE region IN (...)
+     - 添加 WHERE date >= CURRENT_DATE - max_history_days
+     - 添加 LIMIT max_rows
+
+# 模型配置（OpenAI 协议兼容）
+llm:
+  provider: openai
+  base_url: https://wishub-x6.ctyun.cn/v1
+  api_key: ${LLM_API_KEY}
+  model: gpt-4o
+  max_tokens: 4096
+  temperature: 0.3
+
+# 环境变量
+env_file: .env

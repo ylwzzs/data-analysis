@@ -119,6 +119,105 @@ GRANT SELECT, INSERT ON agent_query_logs TO anon, authenticated;
 GRANT SELECT ON data_sources_meta TO anon, authenticated;
 
 -- ============================================
+-- 8. RPC 函数:获取用户权限
+-- ============================================
+CREATE OR REPLACE FUNCTION get_user_permissions(user_id VARCHAR)
+RETURNS JSONB AS $$
+DECLARE
+  user_rec RECORD;
+  dept_rec RECORD;
+  regions TEXT[] := '{}';
+  max_history_days INT := 30;
+  max_rows INT := 500;
+BEGIN
+  -- 查询用户
+  SELECT * INTO user_rec
+  FROM org_users
+  WHERE wecom_id = user_id;
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('error', '用户未同步,请先登录数据分析平台');
+  END IF;
+
+  -- 查询用户所属部门的权限
+  FOR dept_rec IN
+    SELECT allowed_regions, data_scope
+    FROM org_departments
+    WHERE id = ANY(user_rec.department_ids)
+  LOOP
+    -- 合并地区权限
+    IF dept_rec.allowed_regions ? '*' THEN
+      regions := ARRAY['*'];
+    ELSE
+      SELECT array_agg(DISTINCT x) INTO regions
+      FROM (
+        SELECT unnest(regions) AS x
+        UNION
+        SELECT jsonb_array_elements_text(dept_rec.allowed_regions)
+      ) t;
+    END IF;
+
+    -- 取最大时间范围
+    IF dept_rec.data_scope->>'max_history_days' IS NOT NULL THEN
+      max_history_days := GREATEST(max_history_days, (dept_rec.data_scope->>'max_history_days')::INT);
+    END IF;
+
+    -- 取最大行数
+    IF dept_rec.data_scope->>'max_rows' IS NOT NULL THEN
+      max_rows := GREATEST(max_rows, (dept_rec.data_scope->>'max_rows')::INT);
+    END IF;
+  END LOOP;
+
+  -- 返回结果
+  RETURN jsonb_build_object(
+    'user_id', user_rec.wecom_id,
+    'user_name', user_rec.name,
+    'permissions', jsonb_build_object(
+      'regions', regions,
+      'max_history_days', max_history_days,
+      'max_rows', max_rows
+    )
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+COMMENT ON FUNCTION get_user_permissions IS '根据企微 userId 获取用户权限信息';
+
+-- ============================================
+-- 9. RPC 函数:执行 SQL 查询(带权限校验)
+-- ============================================
+CREATE OR REPLACE FUNCTION execute_sql(query TEXT)
+RETURNS SETOF JSONB AS $$
+DECLARE
+  upper_query TEXT;
+BEGIN
+  -- 安全检查:只允许 SELECT
+  upper_query := UPPER(TRIM(query));
+  IF upper_query NOT LIKE 'SELECT%' THEN
+    RETURN QUERY SELECT jsonb_build_object('error', '只允许执行 SELECT 查询');
+    RETURN;
+  END IF;
+
+  -- 禁止危险操作
+  IF upper_query LIKE '%INSERT%' OR upper_query LIKE '%UPDATE%'
+     OR upper_query LIKE '%DELETE%' OR upper_query LIKE '%DROP%'
+     OR upper_query LIKE '%TRUNCATE%' OR upper_query LIKE '%ALTER%' THEN
+    RETURN QUERY SELECT jsonb_build_object('error', '禁止执行修改操作');
+    RETURN;
+  END IF;
+
+  -- 执行查询并返回 JSON 结果
+  RETURN QUERY EXECUTE query;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+COMMENT ON FUNCTION execute_sql IS '执行 SQL 查询(仅允许 SELECT)';
+
+-- 授权
+GRANT EXECUTE ON FUNCTION get_user_permissions(VARCHAR) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION execute_sql(TEXT) TO anon, authenticated;
+
+-- ============================================
 -- 完成
 -- ============================================
 -- 迁移完成提示
