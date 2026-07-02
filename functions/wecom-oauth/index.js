@@ -85,6 +85,7 @@ module.exports = async function (req) {
     }
 
     // 3. upsert org_users + 查询部门信息
+    // 注意：INSFORGE_API_BASE 是容器内地址（deno -> insforge）
     const client = createClient({
       baseUrl: Deno.env.get("INSFORGE_API_BASE") || "http://insforge:7130",
       anonKey: Deno.env.get("ANON_KEY"),

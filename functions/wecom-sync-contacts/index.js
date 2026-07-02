@@ -62,9 +62,10 @@ module.exports = async function (req) {
       }
     }
 
-    // 4. 使用 ANON_KEY 连接数据库（与 wecom-oauth 一致）
+    // 4. 使用 ANON_KEY 连接数据库
+    // 注意：INSFORGE_API_BASE 是容器内地址（deno -> insforge），INSFORGE_BASE_URL 是外部地址
     const client = createClient({
-      baseUrl: Deno.env.get("INSFORGE_BASE_URL") || Deno.env.get("INSFORGE_API_BASE") || "http://insforge:7130",
+      baseUrl: Deno.env.get("INSFORGE_API_BASE") || "http://insforge:7130",
       anonKey: Deno.env.get("ANON_KEY"),
     });
 
