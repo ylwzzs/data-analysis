@@ -36,6 +36,9 @@ export async function middleware(req: NextRequest) {
   const newHeaders = new Headers(req.headers);
   newHeaders.set("x-device-type", isMobile ? "mobile" : "desktop");
 
+  // 调试日志
+  console.log(`[middleware] ${req.nextUrl.pathname} -> device: ${isMobile ? "mobile" : "desktop"}, cookie: ${deviceTypeCookie || "无"}, UA: ${ua.slice(0, 50)}`);
+
   const newReq = new NextRequest(req.url, {
     headers: newHeaders,
     method: req.method,
@@ -78,7 +81,8 @@ async function handleWecomClient(req: NextRequest) {
   if (token) {
     // 企微环境可信，有 token 直接放行
     // 黑名单检查只在普通浏览器环境进行
-    return NextResponse.next();
+    // 关键：传递修改后的 request，保留注入的 header
+    return NextResponse.next({ request: req });
   }
 
   // 无 token，构造静默授权 URL
@@ -129,7 +133,8 @@ async function handleRegularBrowser(req: NextRequest) {
     return response;
   }
 
-  return NextResponse.next();
+  // 关键：传递修改后的 request，保留注入的 header
+  return NextResponse.next({ request: req });
 }
 
 // 检查 token 是否在黑名单中
