@@ -96,14 +96,15 @@ module.exports = async function (req) {
       { onConflict: "wecom_id" },
     );
 
-    // 查询用户的部门信息
+    // 查询用户的部门和姓名信息
     const { data: user, error: userError } = await client.database
       .from("org_users")
-      .select("department_ids")
+      .select("department_ids, name")
       .eq("wecom_id", wecomUserId)
       .single();
 
     const departmentIds = user?.department_ids || [];
+    const userName = user?.name || wecomUserId;  // 如果没有姓名则用 userid
 
     // 4. 签发 access_token（role=authenticated，携带部门信息）
     const now = Math.floor(Date.now() / 1000);
@@ -118,7 +119,7 @@ module.exports = async function (req) {
       },
       Deno.env.get("JWT_SECRET"),
     );
-    return json({ ok: true, wecom_userid: wecomUserId, access_token: accessToken });
+    return json({ ok: true, wecom_userid: wecomUserId, wecom_name: userName, access_token: accessToken });
   } catch (e) {
     return json({ error: String(e) }, 500);
   }

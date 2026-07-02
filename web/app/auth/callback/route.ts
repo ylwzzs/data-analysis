@@ -49,6 +49,16 @@ export async function GET(req: Request) {
     path: "/",
     maxAge: 7 * 86400,
   });
+  // 用户姓名（优先显示姓名，fallback 到 userid）
+  if (data.wecom_name) {
+    c.set("wecom_name", data.wecom_name, {
+      httpOnly: false,
+      secure: true,
+      sameSite: "lax",
+      path: "/",
+      maxAge: 7 * 86400,
+    });
+  }
 
   // 回跳到原路径
   return NextResponse.redirect(new URL(safeTarget, origin));

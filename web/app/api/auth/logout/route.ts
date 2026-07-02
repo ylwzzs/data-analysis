@@ -15,6 +15,7 @@ export async function POST(req: Request) {
     // 清除 cookies
     cookieStore.delete("insforge_access_token");
     cookieStore.delete("wecom_userid");
+    cookieStore.delete("wecom_name");
 
     return NextResponse.json({ ok: true });
   } catch (e) {

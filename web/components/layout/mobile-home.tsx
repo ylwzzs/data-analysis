@@ -11,10 +11,15 @@ interface MobileHomePageProps {
 }
 
 export async function MobileHomePage({ reports }: MobileHomePageProps) {
-  const userid = (await cookies()).get("wecom_userid")?.value;
+  const cookiesList = await cookies();
+  const name = cookiesList.get("wecom_name")?.value;
+  const userid = cookiesList.get("wecom_userid")?.value;
   const headersList = await headers();
   const ua = headersList.get("user-agent") || "";
   const isWecom = isWecomClient(ua);
+
+  // 优先显示姓名，fallback 到 userid
+  const displayName = name || userid;
 
   return (
     <div className="min-h-screen flex flex-col bg-gray-50">
@@ -24,9 +29,9 @@ export async function MobileHomePage({ reports }: MobileHomePageProps) {
           <Badge variant="secondary">Beta</Badge>
         </div>
         <div className="flex items-center gap-2">
-          {userid ? (
+          {displayName ? (
             <>
-              <span className="text-sm text-muted-foreground">{userid}</span>
+              <span className="text-sm text-muted-foreground">{displayName}</span>
               {/* 企微客户端内隐藏退出按钮 */}
               {!isWecom && <LogoutButton />}
             </>
