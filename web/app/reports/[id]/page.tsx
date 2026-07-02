@@ -24,17 +24,26 @@ export default async function ReportPage({ params }: PageProps) {
     notFound();
   }
 
+  // 移动端：全屏布局，无 Sidebar
+  if (isMobile) {
+    return (
+      <div className="min-h-screen bg-gray-50">
+        <Header />
+        <main className="flex-1">
+          <MobileReportDetail report={report} />
+        </main>
+      </div>
+    );
+  }
+
+  // PC 端：带 Sidebar 布局
   return (
     <div className="min-h-screen bg-gray-50">
       <Header />
       <div className="flex">
         <Sidebar />
         <main className="flex-1 p-6">
-          {isMobile ? (
-            <MobileReportDetail report={report} />
-          ) : (
-            <DesktopReportDetail report={report} />
-          )}
+          <DesktopReportDetail report={report} />
         </main>
       </div>
     </div>
