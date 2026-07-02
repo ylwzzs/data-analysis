@@ -2,6 +2,16 @@
   // OpenClaw 配置文件
   // 数据分析企微机器人助手
 
+  // Gateway 配置（必须）
+  gateway: {
+    mode: "local",
+    bind: "lan",
+    port: 18789,
+    controlUi: {
+      allowedOrigins: ["http://localhost:18789", "http://127.0.0.1:18789"],
+    },
+  },
+
   // 模型配置：自定义 wishub 提供商（OpenAI 协议兼容）
   models: {
     mode: "merge",
@@ -32,35 +42,7 @@
         primary: "wishub/DeepSeek-V4-Flash",
       },
       workspace: "/home/node/.openclaw/workspace",
-      systemPrompt: `你是数据分析助手，帮助用户查询业务数据。
-
-## 工作流程
-1. 收到用户问题后，先调用 get_user_permissions 工具获取用户权限
-2. 调用 get_table_schema 工具获取可用表结构
-3. 根据用户问题和权限生成 SQL（只允许 SELECT）
-4. 调用 execute_query 工具执行查询
-5. 调用 save_audit_log 工具记录审计日志
-6. 将结果以友好的方式返回给用户
-
-## 权限规则
-- 用户只能查看其权限范围内的地区数据
-- 必须在 SQL 中注入权限过滤条件
-- 自动添加时间范围限制（根据用户权限的 max_history_days）
-- 自动添加 LIMIT（根据用户权限的 max_rows）
-
-## SQL 生成规则
-1. 只生成 SELECT 查询，禁止 INSERT/UPDATE/DELETE
-2. 使用标准 SQL 语法（PostgreSQL 兼容）
-3. 自动添加 LIMIT 子句
-4. 权限过滤条件：
-   - 如果用户权限 regions 不包含 "*"，添加 WHERE region IN (...)
-   - 添加 WHERE date >= CURRENT_DATE - max_history_days
-   - 添加 LIMIT max_rows
-
-## 回复格式
-- 用简洁的中文回复
-- 数据结果用表格形式展示
-- 如果查询失败，友好提示用户`,
+      systemPrompt: "你是数据分析助手，帮助用户查询业务数据。\n\n工作流程：\n1. 收到用户问题后，先调用 get_user_permissions 工具获取用户权限\n2. 调用 get_table_schema 工具获取可用表结构\n3. 根据用户问题和权限生成 SQL（只允许 SELECT）\n4. 调用 execute_query 工具执行查询\n5. 调用 save_audit_log 工具记录审计日志\n6. 将结果以友好的方式返回给用户\n\n权限规则：\n- 用户只能查看其权限范围内的地区数据\n- 必须在 SQL 中注入权限过滤条件\n- 自动添加时间范围限制\n- 自动添加 LIMIT\n\n回复格式：\n- 用简洁的中文回复\n- 数据结果用表格形式展示\n- 如果查询失败，友好提示用户",
     },
   },
 
@@ -76,28 +58,4 @@
       "web_fetch",
     ],
   },
-
-  // Gateway 配置
-  gateway: {
-    mode: "local",
-    bind: "lan",
-    port: 18789,
-    controlUi: {
-      allowedOrigins: ["http://localhost:18789", "http://127.0.0.1:18789"],
-    },
-  },
-
-  // 企微 channel 配置（用户自行配置）
-  // channels: {
-  //   wecom: {
-  //     enabled: true,
-  //     corpId: "${WECOM_CORP_ID}",
-  //     agentId: "${WECOM_AGENT_ID}",
-  //     secret: "${WECOM_SECRET}",
-  //     token: "${WECOM_TOKEN}",
-  //     encodingAesKey: "${WECOM_ENCODING_AES_KEY}",
-  //     dmPolicy: "open",
-  //     groupPolicy: "allowlist",
-  //   },
-  // },
 }
