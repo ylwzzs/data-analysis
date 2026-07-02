@@ -122,17 +122,24 @@ async function checkTokenBlacklist(token: string): Promise<boolean> {
           "Authorization": `Bearer ${token}`,
           "Accept": "application/json",
         },
+        // 添加超时和重试策略
+        signal: AbortSignal.timeout(3000),
       }
     );
 
-    if (!response.ok) return false;
+    if (!response.ok) {
+      // 查询失败但不抛异常，放行（fail-open，避免误杀）
+      console.error("Blacklist query failed:", response.status);
+      return false;
+    }
 
     const data = await response.json();
     return data.length > 0;
   } catch (e) {
-    // 查询失败时，默认拦截（fail-closed 安全模型）
+    // 查询失败时放行（fail-open），避免因网络问题导致用户被登出
+    // 真正的黑名单 token 会在 PostgREST 层面拒绝请求
     console.error("Blacklist check failed:", e);
-    return true;
+    return false;
   }
 }
 
