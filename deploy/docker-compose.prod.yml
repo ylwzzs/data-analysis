@@ -35,17 +35,16 @@ services:
       OPENCLAW_HOME: /home/node
       OPENCLAW_STATE_DIR: /home/node/.openclaw
       OPENCLAW_CONFIG_PATH: /home/node/.openclaw/openclaw.json
-      OPENCLAW_CONFIG_DIR: /home/node/.openclaw
       OPENCLAW_WORKSPACE_DIR: /home/node/.openclaw/workspace
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
       OPENCLAW_GATEWAY_BIND: lan
       OPENCLAW_GATEWAY_PORT: 18789
+      OPENCLAW_GATEWAY_MODE: local
       TZ: Asia/Shanghai
       # 模型提供商 API Key（自定义 wishub）
       WISHUB_API_KEY: ${WISHUB_API_KEY:-}
     volumes:
-      - "${OPENCLAW_CONFIG_DIR:-../openclaw/state}:/home/node/.openclaw"
-      - "${OPENCLAW_WORKSPACE_DIR:-../openclaw/workspace}:/home/node/.openclaw/workspace"
+      - "../openclaw/state:/home/node/.openclaw"
     cap_drop:
       - NET_RAW
       - NET_ADMIN
