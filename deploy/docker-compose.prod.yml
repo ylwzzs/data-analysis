@@ -24,7 +24,7 @@ services:
 
   # openclaw Agent 服务
   openclaw:
-    image: ghcr.io/openclaw/openclaw:latest
+    image: caj9ik14016wep-ghcr.xuanyuan.run/openclaw/openclaw:latest
     container_name: deploy-openclaw-1
     restart: unless-stopped
     env_file:
