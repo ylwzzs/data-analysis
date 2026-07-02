@@ -16,44 +16,52 @@ export default async function ReportDetailLayout({
 }: {
   children: React.ReactNode;
 }) {
-  // 只读取 middleware 注入的请求头（最可靠，避免闪烁）
+  // 设备检测：先读取所有可能的来源（调试需要）
   const headersList = await headers();
-  const deviceFromHeader = headersList.get("x-device-type");
+  const cookiesList = await cookies();
+  const ua = headersList.get("user-agent") || "";
 
-  // 如果 header 不存在，才 fallback 到 cookie + UA（首次访问场景）
+  const deviceFromHeader = headersList.get("x-device-type");
+  const deviceFromCookie = cookiesList.get("device_type")?.value;
+  const isMobileByUA = isMobileDevice(ua);
+
+  // 最终判定逻辑
   let isMobile = deviceFromHeader === "mobile";
 
   if (!deviceFromHeader) {
-    const cookiesList = await cookies();
-    const deviceFromCookie = cookiesList.get("device_type")?.value;
-    const ua = headersList.get("user-agent") || "";
-    isMobile = deviceFromCookie === "mobile" || isMobileDevice(ua);
+    isMobile = deviceFromCookie === "mobile" || isMobileByUA;
   }
-
-  // 调试信息（开发时使用）
-  const debugInfo = {
-    deviceFromHeader,
-    deviceFromCookie: deviceFromHeader ? null : (await cookies()).get("device_type")?.value ?? null,
-    isMobile,
-    ua: headersList.get("user-agent") || "",
-  };
 
   // 渲染时间戳（用于追踪闪烁）
   const renderTime = new Date().toISOString().split("T")[1].slice(0, 12);
+
+  // 调试信息（显示所有检测结果）
+  const debugInfo = {
+    deviceFromHeader,
+    deviceFromCookie: deviceFromCookie ?? null,
+    isMobile,
+    ua: ua.slice(0, 60),
+  };
+
+  // 调试面板：显示所有检测来源，不依赖设备检测结果
+  const debugPanel = (
+    <div className="fixed top-0 left-0 right-0 z-[9999] bg-purple-100 border-b border-purple-500 p-2 text-xs shadow-lg">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="font-bold text-purple-900 bg-purple-300 px-2 py-1 rounded">
+          [{renderTime}] {isMobile ? "移动端" : "PC"}
+        </span>
+        <span className="text-purple-800">header: <b className={deviceFromHeader === "mobile" ? "text-green-600" : "text-red-600"}>{deviceFromHeader || "❌无"}</b></span>
+        <span className="text-purple-800">cookie: <b className={deviceFromCookie === "mobile" ? "text-green-600" : "text-red-600"}>{deviceFromCookie || "❌无"}</b></span>
+        <span className="text-purple-800">UA检测: <b className={isMobileByUA ? "text-green-600" : "text-red-600"}>{isMobileByUA ? "mobile" : "desktop"}</b></span>
+      </div>
+    </div>
+  );
 
   // 移动端：全屏布局，无 Sidebar，带调试面板
   if (isMobile) {
     return (
       <div className="min-h-screen bg-gray-50">
-        {/* 固定调试面板 - 显示每次渲染状态 */}
-        <div className="fixed top-0 left-0 right-0 z-[9999] bg-yellow-100 border-b border-yellow-300 p-2 text-xs">
-          <div className="flex items-center justify-between gap-2">
-            <span className="font-bold text-yellow-800">[{renderTime}] 移动端布局</span>
-            <span>header: {deviceFromHeader || "无"}</span>
-            <span>cookie: {debugInfo.deviceFromCookie || "无"}</span>
-            <span className="truncate max-w-[200px]">UA: {debugInfo.ua.slice(0, 50)}...</span>
-          </div>
-        </div>
+        {debugPanel}
         <Header />
         <main className="flex-1 pt-8">{children}</main>
         <DebugButton info={debugInfo} />
@@ -64,15 +72,7 @@ export default async function ReportDetailLayout({
   // PC 端：带 Sidebar 布局，带调试面板
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* 固定调试面板 - 显示每次渲染状态 */}
-      <div className="fixed top-0 left-0 right-0 z-[9999] bg-red-100 border-b border-red-300 p-2 text-xs">
-        <div className="flex items-center justify-between gap-2">
-          <span className="font-bold text-red-800">[{renderTime}] PC 端布局</span>
-          <span>header: {deviceFromHeader || "无"}</span>
-          <span>cookie: {debugInfo.deviceFromCookie || "无"}</span>
-          <span className="truncate max-w-[200px]">UA: {debugInfo.ua.slice(0, 50)}...</span>
-        </div>
-      </div>
+      {debugPanel}
       <Header />
       <div className="flex pt-8">
         <Sidebar />
