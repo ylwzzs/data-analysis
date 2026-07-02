@@ -14,10 +14,21 @@ export function isWecomClient(ua: string): boolean {
 
 /**
  * 检测是否为移动设备
- * 支持：Android, iOS, iPad, Windows Phone
+ * 支持：Android, iOS, iPad, Windows Phone, 企微移动端
  */
 export function isMobileDevice(ua: string): boolean {
-  return /mobile|android|iphone|ipad|windows phone/i.test(ua);
+  // 标准移动设备检测
+  if (/mobile|android|iphone|ipad|windows phone/i.test(ua)) {
+    return true;
+  }
+
+  // 企微移动端：UA 包含 wxwork 且 UA 长度较短或包含移动特征
+  // 企微 PC 端 UA 通常更长，包含 Windows/Mac 等桌面标识
+  if (/wxwork/i.test(ua) && !/windows|macintosh|desktop/i.test(ua)) {
+    return true;
+  }
+
+  return false;
 }
 
 /**
