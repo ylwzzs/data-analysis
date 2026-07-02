@@ -52,8 +52,14 @@ async function handleWecomClient(req: NextRequest) {
 
   // 无 token，构造静默授权 URL
   const targetPath = req.nextUrl.pathname + req.nextUrl.search;
+
+  // 用 X-Forwarded-Host / Host 头构造外部 origin，避免 req.nextUrl.origin 是容器内地址
+  const proto = req.headers.get("x-forwarded-proto") || "https";
+  const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || "";
+  const origin = `${proto}://${host}`;
+
   const authUrl = buildWecomAuthUrl(
-    `${req.nextUrl.origin}/auth/callback`,
+    `${origin}/auth/callback`,
     encodeURIComponent(targetPath) // state 携带原路径
   );
 
