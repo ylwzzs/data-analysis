@@ -24,23 +24,53 @@ services:
 
   # openclaw Agent 服务
   openclaw:
-    image: openclaw/openclaw:latest
+    image: ghcr.io/openclaw/openclaw:latest
     container_name: deploy-openclaw-1
     restart: unless-stopped
-    volumes:
-      - ../openclaw/config.yaml:/app/config.yaml:ro
-      - ../openclaw/.env:/app/.env:ro
+    env_file:
+      - path: ../openclaw/.env
+        required: false
     environment:
-      - LLM_API_KEY=${LLM_API_KEY}
-    depends_on:
-      - insforge
+      HOME: /home/node
+      OPENCLAW_HOME: /home/node
+      OPENCLAW_STATE_DIR: /home/node/.openclaw
+      OPENCLAW_CONFIG_PATH: /home/node/.openclaw/openclaw.json
+      OPENCLAW_CONFIG_DIR: /home/node/.openclaw
+      OPENCLAW_WORKSPACE_DIR: /home/node/.openclaw/workspace
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
+      OPENCLAW_GATEWAY_BIND: lan
+      OPENCLAW_GATEWAY_PORT: 18789
+      TZ: Asia/Shanghai
+      # 模型提供商 API Key（自定义 wishub）
+      WISHUB_API_KEY: ${WISHUB_API_KEY:-}
+    volumes:
+      - "${OPENCLAW_CONFIG_DIR:-../openclaw/state}:/home/node/.openclaw"
+      - "${OPENCLAW_WORKSPACE_DIR:-../openclaw/workspace}:/home/node/.openclaw/workspace"
+    cap_drop:
+      - NET_RAW
+      - NET_ADMIN
+    security_opt:
+      - no-new-privileges:true
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:18789:18789"  # Gateway Control UI
     networks:
       - insforge-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:18789/healthz').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
       interval: 30s
-      timeout: 10s
-      retries: 3
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      - insforge
 
   nginx:
     image: caj9ik14016wep.xuanyuan.run/jonasal/nginx-certbot:latest
