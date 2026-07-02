@@ -175,4 +175,5 @@ async function checkTokenBlacklist(token: string): Promise<boolean> {
 
 export const config = {
   matcher: ["/", "/reports/:path*", "/sources", "/mobile", "/mobile/reports/:path*"],
+  // 不拦截: /login, /auth/callback, /debug, /api/*, /_next/*, 静态资源, /WW_verify_*, /functions/*
 };
