@@ -2,6 +2,7 @@ import { headers, cookies } from "next/headers";
 
 import { Header } from "@/components/layout/header";
 import { Sidebar } from "@/components/layout/sidebar";
+import { DebugButton } from "@/components/debug/debug-button";
 import { isMobileDevice } from "@/lib/device";
 
 /**
@@ -29,17 +30,26 @@ export default async function ReportDetailLayout({
     isMobile = deviceFromCookie === "mobile" || isMobileDevice(ua);
   }
 
-  // 移动端：全屏布局，无 Sidebar
+  // 调试信息（开发时使用）
+  const debugInfo = {
+    deviceFromHeader,
+    deviceFromCookie: deviceFromHeader ? null : (await cookies()).get("device_type")?.value ?? null,
+    isMobile,
+    ua: headersList.get("user-agent") || "",
+  };
+
+  // 移动端：全屏布局，无 Sidebar，带调试按钮
   if (isMobile) {
     return (
       <div className="min-h-screen bg-gray-50">
         <Header />
         <main className="flex-1">{children}</main>
+        <DebugButton info={debugInfo} />
       </div>
     );
   }
 
-  // PC 端：带 Sidebar 布局
+  // PC 端：带 Sidebar 布局，带调试按钮
   return (
     <div className="min-h-screen bg-gray-50">
       <Header />
@@ -47,6 +57,7 @@ export default async function ReportDetailLayout({
         <Sidebar />
         <main className="flex-1 p-6">{children}</main>
       </div>
+      <DebugButton info={debugInfo} />
     </div>
   );
 }
