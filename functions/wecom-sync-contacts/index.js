@@ -77,10 +77,12 @@ module.exports = async function (req) {
       `https://qyapi.weixin.qq.com/cgi-bin/department/list?access_token=${accessToken}`
     );
     const deptData = await deptRes.json();
+    console.log("Department API response:", JSON.stringify(deptData));
     if (deptData.errcode !== 0) {
       return json({ error: "failed_to_get_departments", detail: deptData }, 502);
     }
     const departments = deptData.department || [];
+    console.log("Departments found:", departments.length);
 
     // 3. 获取用户列表（遍历每个部门）
     const users = [];
@@ -108,8 +110,9 @@ module.exports = async function (req) {
     });
 
     // 5.1 同步部门
+    let deptRows = [];
     if (departments.length > 0) {
-      const deptRows = departments.map((d) => ({
+      deptRows = departments.map((d) => ({
         id: String(d.id),
         name: d.name,
         parent_id: d.parentid ? String(d.parentid) : null,
@@ -158,6 +161,13 @@ module.exports = async function (req) {
       ok: true,
       departments: departments.length,
       users: userRows.length,
+      debug: {
+        deptRowsCount: deptRows.length,
+        userRowsCount: userRows.length,
+        sampleDept: deptRows[0] || null,
+        sampleUser: userRows[0] || null,
+        jwtSigned: !!serviceToken
+      }
     });
   } catch (e) {
     return json({ error: String(e) }, 500);
