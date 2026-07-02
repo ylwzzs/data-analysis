@@ -56,6 +56,11 @@ export async function middleware(req: NextRequest) {
     response = await handleRegularBrowser(newReq);
   }
 
+  // 禁用缓存，确保每次请求都重新渲染（避免设备检测缓存）
+  response.headers.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  response.headers.set("Pragma", "no-cache");
+  response.headers.set("Expires", "0");
+
   // 如果首次访问（没有 device_type cookie），写入设备类型
   if (!deviceTypeCookie) {
     response.cookies.set("device_type", isMobile ? "mobile" : "desktop", {

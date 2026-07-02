@@ -11,7 +11,7 @@ interface ReportCardProps {
 
 export function ReportCard({ report }: ReportCardProps) {
   return (
-    <Link href={`/reports/${report.id}`}>
+    <Link href={`/reports/${report.id}`} prefetch={false}>
       <div className="bg-white rounded-lg p-4 shadow-sm border">
         <div className="flex items-center justify-between mb-2">
           <h3 className="font-medium">{report.name}</h3>
