@@ -1,5 +1,4 @@
-import { NextResponse } from "next/server";
-import type { NextRequest } from "next/server";
+import { NextResponse, NextRequest } from "next/server";
 import { isWecomClient, isMobileDevice } from "@/lib/device";
 
 // 企微 OAuth 授权 URL 构建
