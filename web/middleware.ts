@@ -36,9 +36,6 @@ export async function middleware(req: NextRequest) {
   const newHeaders = new Headers(req.headers);
   newHeaders.set("x-device-type", isMobile ? "mobile" : "desktop");
 
-  // 调试日志
-  console.log(`[middleware] ${req.nextUrl.pathname} -> device: ${isMobile ? "mobile" : "desktop"}, cookie: ${deviceTypeCookie || "无"}, UA: ${ua.slice(0, 50)}`);
-
   const newReq = new NextRequest(req.url, {
     headers: newHeaders,
     method: req.method,
