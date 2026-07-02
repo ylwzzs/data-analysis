@@ -116,9 +116,11 @@ module.exports = async function (req) {
         order_weight: d.order || 0,
         synced_at: new Date().toISOString(),
       }));
-      const { error: deptError } = await client.database
+      console.log("Upserting departments:", JSON.stringify(deptRows));
+      const { data: deptData, error: deptError } = await client.database
         .from("org_departments")
         .upsert(deptRows, { onConflict: "id" });
+      console.log("Departments result:", JSON.stringify({ data: deptData, error: deptError }));
       if (deptError) {
         return json({ error: "upsert_departments_failed", detail: deptError }, 502);
       }
@@ -142,9 +144,11 @@ module.exports = async function (req) {
       });
     }
     if (userRows.length > 0) {
-      const { error: userError } = await client.database
+      console.log("Upserting users:", JSON.stringify(userRows.slice(0, 2)));
+      const { data: userData, error: userError } = await client.database
         .from("org_users")
         .upsert(userRows, { onConflict: "wecom_id" });
+      console.log("Users result:", JSON.stringify({ data: userData, error: userError }));
       if (userError) {
         return json({ error: "upsert_users_failed", detail: userError }, 502);
       }
