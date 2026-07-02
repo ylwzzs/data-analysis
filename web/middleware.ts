@@ -66,14 +66,16 @@ async function handleWecomClient(req: NextRequest) {
   );
 
   if (!authUrl) {
-    // 企微配置缺失，回退到登录页
+    // 企微配置缺失，回退到登录页（但企微内不应显示登录按钮）
     const url = req.nextUrl.clone();
     url.pathname = "/login";
     url.searchParams.set("next", targetPath);
+    url.searchParams.set("wecom", "true");  // 标记企微环境
     return NextResponse.redirect(url);
   }
 
-  return NextResponse.redirect(authUrl);
+  // 使用 307 临时重定向（保持方法），授权成功后会 replace 回原路径
+  return NextResponse.redirect(authUrl, 307);
 }
 
 /**

@@ -6,6 +6,9 @@ import { ReportCard } from "@/components/mobile/report-card";
 import { isWecomClient } from "@/lib/device";
 import type { Report } from "@/lib/api";
 
+// 强制动态渲染，禁用缓存
+export const dynamic = "force-dynamic";
+
 interface MobileHomePageProps {
   reports: Report[];
 }
@@ -35,7 +38,9 @@ export async function MobileHomePage({ reports }: MobileHomePageProps) {
               {/* 企微客户端内隐藏退出按钮 */}
               {!isWecom && <LogoutButton />}
             </>
-          ) : null}
+          ) : (
+            <span className="text-sm text-muted-foreground">已登录</span>
+          )}
         </div>
       </header>
       <main className="flex-1 p-4 space-y-3">
