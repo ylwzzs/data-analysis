@@ -38,23 +38,15 @@ export async function middleware(req: NextRequest) {
 
 /**
  * 处理企微客户端请求
- * 有 token → 放行
+ * 有 token → 直接放行（企微环境可信，不做黑名单检查）
  * 无 token → 自动跳转静默授权
  */
 async function handleWecomClient(req: NextRequest) {
   const token = req.cookies.get("insforge_access_token")?.value;
 
   if (token) {
-    // 有 token，检查是否在黑名单中
-    const isBlacklisted = await checkTokenBlacklist(token);
-    if (isBlacklisted) {
-      const response = NextResponse.redirect(new URL("/login", req.url));
-      response.cookies.delete("insforge_access_token");
-      response.cookies.delete("wecom_userid");
-      response.cookies.delete("wecom_name");
-      return response;
-    }
-    // Token 有效，放行
+    // 企微环境可信，有 token 直接放行
+    // 黑名单检查只在普通浏览器环境进行
     return NextResponse.next();
   }
 
@@ -66,15 +58,14 @@ async function handleWecomClient(req: NextRequest) {
   );
 
   if (!authUrl) {
-    // 企微配置缺失，回退到登录页（但企微内不应显示登录按钮）
+    // 企微配置缺失，回退到登录页
     const url = req.nextUrl.clone();
     url.pathname = "/login";
     url.searchParams.set("next", targetPath);
-    url.searchParams.set("wecom", "true");  // 标记企微环境
     return NextResponse.redirect(url);
   }
 
-  // 使用 307 临时重定向（保持方法），授权成功后会 replace 回原路径
+  // 使用 307 临时重定向
   return NextResponse.redirect(authUrl, 307);
 }
 
