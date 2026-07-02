@@ -4,6 +4,7 @@
 // 对上层保持原有类型与函数签名（snake_case → camelCase 映射在此完成）。
 import { cookies } from "next/headers";
 import { createClient } from "@insforge/sdk";
+import { wrapError } from "./error";
 
 export interface Metric {
   name: string;
@@ -68,55 +69,74 @@ async function getClient() {
 }
 
 export async function getReports(): Promise<Report[]> {
-  const insforge = await getClient();
-  const { data, error } = await insforge.database
-    .from("reports")
-    .select("id,name,description,updated_at,metrics");
-  if (error) throw error;
-  return (data as ReportRow[]).map((r) => ({
-    id: r.id,
-    name: r.name,
-    description: r.description ?? "",
-    updatedAt: formatTime(r.updated_at),
-    metrics: r.metrics ?? [],
-  }));
+  try {
+    const insforge = await getClient();
+    const { data, error } = await insforge.database
+      .from("reports")
+      .select("id,name,description,updated_at,metrics");
+    if (error) throw error;
+    return (data as ReportRow[]).map((r) => ({
+      id: r.id,
+      name: r.name,
+      description: r.description ?? "",
+      updatedAt: formatTime(r.updated_at),
+      metrics: r.metrics ?? [],
+    }));
+  } catch (err) {
+    console.error("getReports failed:", err);
+    const appError = wrapError(err);
+    throw new Error(appError.message);
+  }
 }
 
 export async function getReport(id: string): Promise<Report | null> {
-  const insforge = await getClient();
-  const { data, error } = await insforge.database
-    .from("reports")
-    .select("id,name,description,updated_at,metrics")
-    .eq("id", id)
-    .single();
-  if (error || !data) return null;
-  const r = data as ReportRow;
-  return {
-    id: r.id,
-    name: r.name,
-    description: r.description ?? "",
-    updatedAt: formatTime(r.updated_at),
-    metrics: r.metrics ?? [],
-  };
+  try {
+    const insforge = await getClient();
+    const { data, error } = await insforge.database
+      .from("reports")
+      .select("id,name,description,updated_at,metrics")
+      .eq("id", id)
+      .single();
+    if (error) throw error;
+    if (!data) return null;
+    const r = data as ReportRow;
+    return {
+      id: r.id,
+      name: r.name,
+      description: r.description ?? "",
+      updatedAt: formatTime(r.updated_at),
+      metrics: r.metrics ?? [],
+    };
+  } catch (err) {
+    console.error("getReport failed:", err);
+    const appError = wrapError(err);
+    throw new Error(appError.message);
+  }
 }
 
 export async function getSources(): Promise<DataSource[]> {
-  const insforge = await getClient();
-  const { data, error } = await insforge.database
-    .from("data_sources")
-    .select(
-      "id,name,description,api_endpoint,auth_type,schedule,enabled,last_sync,row_count"
-    );
-  if (error) throw error;
-  return (data as SourceRow[]).map((s) => ({
-    id: s.id,
-    name: s.name,
-    description: s.description ?? undefined,
-    apiEndpoint: s.api_endpoint,
-    authType: s.auth_type,
-    schedule: s.schedule,
-    enabled: s.enabled,
-    lastSync: s.last_sync ? formatTime(s.last_sync) : undefined,
-    rowCount: s.row_count ?? undefined,
-  }));
+  try {
+    const insforge = await getClient();
+    const { data, error } = await insforge.database
+      .from("data_sources")
+      .select(
+        "id,name,description,api_endpoint,auth_type,schedule,enabled,last_sync,row_count"
+      );
+    if (error) throw error;
+    return (data as SourceRow[]).map((s) => ({
+      id: s.id,
+      name: s.name,
+      description: s.description ?? undefined,
+      apiEndpoint: s.api_endpoint,
+      authType: s.auth_type,
+      schedule: s.schedule,
+      enabled: s.enabled,
+      lastSync: s.last_sync ? formatTime(s.last_sync) : undefined,
+      rowCount: s.row_count ?? undefined,
+    }));
+  } catch (err) {
+    console.error("getSources failed:", err);
+    const appError = wrapError(err);
+    throw new Error(appError.message);
+  }
 }
