@@ -16,6 +16,9 @@ services:
     restart: unless-stopped
     environment:
       - NODE_ENV=production
+      # InsForge SDK（服务端 API Routes 使用）
+      - INSFORGE_API_BASE=http://insforge:7130
+      - INSFORGE_API_KEY=${ANON_KEY}
     depends_on:
       - insforge
     networks:
