@@ -18,9 +18,18 @@ const ALL_BRANCH_NUMS = [
 ];
 
 // ===== 签名算法 =====
-function generateSignature(authToken, timestamp, nonce, branchNums, scopeIds, urlPath, bodyStr) {
+function generateSignature(authToken, timestamp, nonce, branchNums, scopeIds, urlPath, bodyStr, secretKey) {
   // SHA256(auth + timestamp + nonce + branch_nums + scope_ids + SECRET + url + body + SECRET)
-  const signStr = authToken + timestamp + nonce + branchNums + scopeIds + SECRET_KEY + urlPath + bodyStr + SECRET_KEY;
+  const signStr = authToken + timestamp + nonce + branchNums + scopeIds + secretKey + urlPath + bodyStr + secretKey;
+
+  console.log("DEBUG signStr length:", signStr.length);
+  console.log("DEBUG authToken:", authToken.substring(0, 30));
+  console.log("DEBUG timestamp:", timestamp);
+  console.log("DEBUG nonce:", nonce);
+  console.log("DEBUG branchNums:", branchNums.substring(0, 30));
+  console.log("DEBUG secretKey:", secretKey ? "set" : "EMPTY!");
+  console.log("DEBUG urlPath:", urlPath);
+  console.log("DEBUG bodyStr:", bodyStr.substring(0, 50));
 
   // Deno: 使用 crypto.subtle.digest
   const encoder = new TextEncoder();
@@ -28,17 +37,19 @@ function generateSignature(authToken, timestamp, nonce, branchNums, scopeIds, ur
 
   return crypto.subtle.digest('SHA-256', data).then(hashBuffer => {
     const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    const signature = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    console.log("DEBUG signature:", signature);
+    return signature;
   });
 }
 
 // ===== 请求构建 =====
-async function buildHeaders(authToken, branchNumsStr, urlPath, bodyStr) {
+async function buildHeaders(authToken, branchNumsStr, urlPath, bodyStr, secretKey) {
   const timestamp = String(Date.now());
   const nonce = generateNonce();
 
   const signature = await generateSignature(
-    authToken, timestamp, nonce, branchNumsStr, "", urlPath, bodyStr
+    authToken, timestamp, nonce, branchNumsStr, "", urlPath, bodyStr, secretKey
   );
 
   return {
@@ -63,6 +74,8 @@ function generateNonce() {
 }
 
 function buildBody(branchNums, dates, pageNumber, pageSize) {
+  // Python: json.dumps(obj, separators=(',', ':'), ensure_ascii=False)
+  // JS: JSON.stringify 默认不加空格，但需确保紧凑格式
   return JSON.stringify({
     branch_nums: branchNums,
     item_departments: [],
@@ -71,15 +84,15 @@ function buildBody(branchNums, dates, pageNumber, pageSize) {
     order_sources: [],
     page_number: pageNumber,
     page_size: pageSize
-  }, null, 0);  // separators=(',',':') equivalent - no spaces
+  });
 }
 
 // ===== API 调用 =====
-async function callApi(urlPath, authToken, bodyStr, branchNumsStr, maxRetries = 2) {
+async function callApi(urlPath, authToken, bodyStr, branchNumsStr, secretKey, maxRetries = 2) {
   const fullUrl = BASE_URL + urlPath;
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
-    const headers = await buildHeaders(authToken, branchNumsStr, urlPath, bodyStr);
+    const headers = await buildHeaders(authToken, branchNumsStr, urlPath, bodyStr, secretKey);
 
     const response = await fetch(fullUrl, {
       method: 'POST',
@@ -111,11 +124,11 @@ function delay(ms) {
 }
 
 // ===== 业务逻辑 =====
-async function fetchRetailCount(authToken, dates, branchNums) {
+async function fetchRetailCount(authToken, dates, branchNums, secretKey) {
   const branchNumsStr = branchNums.join(',');
   const bodyStr = buildBody(branchNums, dates, 1, 200);
 
-  const result = await callApi(ENDPOINT_RETAIL_COUNT, authToken, bodyStr, branchNumsStr);
+  const result = await callApi(ENDPOINT_RETAIL_COUNT, authToken, bodyStr, branchNumsStr, secretKey);
 
   if (!result.ok) {
     throw new Error(`Count API failed: ${result.error || result.status}`);
@@ -128,11 +141,11 @@ async function fetchRetailCount(authToken, dates, branchNums) {
   return result.data.result || 0;
 }
 
-async function fetchRetailDetail(authToken, dates, branchNums, pageNumber, pageSize) {
+async function fetchRetailDetail(authToken, dates, branchNums, pageNumber, pageSize, secretKey) {
   const branchNumsStr = branchNums.join(',');
   const bodyStr = buildBody(branchNums, dates, pageNumber, pageSize);
 
-  const result = await callApi(ENDPOINT_RETAIL_DETAIL, authToken, bodyStr, branchNumsStr);
+  const result = await callApi(ENDPOINT_RETAIL_DETAIL, authToken, bodyStr, branchNumsStr, secretKey);
 
   if (!result.ok) {
     throw new Error(`Detail API failed: ${result.error || result.status}`);
@@ -145,14 +158,14 @@ async function fetchRetailDetail(authToken, dates, branchNums, pageNumber, pageS
   return result.data.result || [];
 }
 
-async function warmUpSession(authToken, dates, branchNums) {
+async function warmUpSession(authToken, dates, branchNums, secretKey) {
   // 预热：发送小请求激活 Token 会话
-  const branchNumsStr = branchNums.join(',');
+  const branchNumsStr = branchNums.join(',');  // 签名用逗号分隔字符串
   const bodyStr = buildBody(branchNums, dates, 1, 5);
 
   console.log("Warm-up: activating token session...");
 
-  const result = await callApi(ENDPOINT_RETAIL_DETAIL, authToken, bodyStr, branchNumsStr);
+  const result = await callApi(ENDPOINT_RETAIL_DETAIL, authToken, bodyStr, branchNumsStr, secretKey);
 
   if (!result.ok || result.data.code === -1) {
     throw new Error(`Warm-up failed: token may be expired. ${JSON.stringify(result.data || result)}`);
@@ -161,12 +174,12 @@ async function warmUpSession(authToken, dates, branchNums) {
   console.log(`Warm-up success: ${result.data.result ? result.data.result.length : 0} test rows`);
 }
 
-async function fetchAllPages(authToken, dates, branchNums, pageSize = 200) {
+async function fetchAllPages(authToken, dates, branchNums, pageSize, secretKey) {
   // 1. 预热会话
-  await warmUpSession(authToken, dates, branchNums);
+  await warmUpSession(authToken, dates, branchNums, secretKey);
 
   // 2. 查询总数
-  const total = await fetchRetailCount(authToken, dates, branchNums);
+  const total = await fetchRetailCount(authToken, dates, branchNums, secretKey);
   console.log(`Total count: ${total}`);
 
   if (total === 0) {
@@ -180,7 +193,7 @@ async function fetchAllPages(authToken, dates, branchNums, pageSize = 200) {
   for (let page = 1; page <= totalPages; page++) {
     console.log(`Fetching page ${page}/${totalPages}...`);
 
-    const records = await fetchRetailDetail(authToken, dates, branchNums, page, pageSize);
+    const records = await fetchRetailDetail(authToken, dates, branchNums, page, pageSize, secretKey);
     allRecords.push(...records);
 
     console.log(`Page ${page}: ${records.length} rows, total ${allRecords.length}`);
@@ -206,9 +219,13 @@ module.exports = async function(req) {
     }
 
     // 凭证检查
-    const authToken = credentials?.token;
+    let authToken = credentials?.token;
     if (!authToken) {
       throw new Error("Missing token in credentials");
+    }
+    // 确保 Authorization 格式正确（Bearer xxx）
+    if (!authToken.startsWith("Bearer ")) {
+      authToken = "Bearer " + authToken;
     }
 
     // 日期参数（默认昨天）
@@ -222,7 +239,7 @@ module.exports = async function(req) {
     console.log(`Storage: ${storage_type} -> ${storage_path}`);
 
     // 执行采集
-    const records = await fetchAllPages(authToken, dates, branchNums, pageSize);
+    const records = await fetchAllPages(authToken, dates, branchNums, pageSize, SECRET_KEY);
 
     console.log(`Collected ${records.length} records`);
 

@@ -140,7 +140,18 @@ export async function PATCH(req: NextRequest) {
     }
   }
 
-  // 获取乐檬签名密钥（仅在 collect-lemeng 任务时需要）
+  // 乐檬任务直接调用 Next.js API route（绕过 Deno runtime 签名问题）
+  if (task.function_slug === 'collect-lemeng') {
+    const lemengRes = await fetch(`${process.env.NEXT_PUBLIC_INSFORGE_URL || 'http://localhost:3000'}/api/admin/collect-lemeng`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task_id: id })
+    });
+    const lemengResult = await lemengRes.json();
+    return NextResponse.json(lemengResult);
+  }
+
+  // 其他任务走 Edge Function
   const isLemeng = task.function_slug === 'collect-lemeng';
   const lemengSecret = isLemeng ? process.env.LEMENG_SECRET_KEY || '' : '';
 
