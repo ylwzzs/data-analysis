@@ -21,6 +21,8 @@ services:
       - INSFORGE_API_KEY=${ANON_KEY}
       # 乐檬签名密钥（collect-lemeng function 需要）
       - LEMENG_SECRET_KEY=${LEMENG_SECRET_KEY}
+      # DuckDB 服务（Parquet 转换）
+      - DUCKDB_URL=http://duckdb:9000
       # 天翼云 OOS 配置（数据持久化）
       - S3_ENDPOINT=${S3_ENDPOINT:-http://xinan-1.zos.ctyun.cn}
       - OOS_ACCESS_KEY=${OOS_ACCESS_KEY}

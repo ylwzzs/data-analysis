@@ -123,11 +123,32 @@ services:
       retries: 5
       start_period: 15s
 
+  duckdb:
+    image: registry-crs-xinan1.ctyun.cn/hookflow/duckdb-service:latest
+    restart: unless-stopped
+    environment:
+      - DUCKDB_PORT=9000
+      - S3_ENDPOINT=${S3_ENDPOINT:-http://xinan-1-internal.zos.ctyun.cn}
+      - S3_ACCESS_KEY=${OOS_ACCESS_KEY}
+      - S3_SECRET_KEY=${OOS_SECRET_KEY}
+      - S3_BUCKET=${OOS_BUCKET:-lemeng-datasource}
+    volumes:
+      - duckdb-cache:/var/lib/duckdb/cache
+    networks:
+      - insforge-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:9000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
 volumes:
   postgres-data:
   deno_cache:
   storage-data:
   insforge-logs:
+  duckdb-cache:
 
 networks:
   insforge-network:

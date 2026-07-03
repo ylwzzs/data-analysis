@@ -1,19 +1,15 @@
 // web/app/api/admin/collect-lemeng/route.ts
-// 直接在 Next.js 服务端调用乐檬 API，避开 Deno runtime 问题
+// 采集乐檬数据，调用 DuckDB 服务转换为 Parquet
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@insforge/sdk';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import crypto from 'crypto';
 
 const INSFORGE_API_BASE = process.env.INSFORGE_API_BASE!;
 const INSFORGE_API_KEY = process.env.INSFORGE_API_KEY!;
 const LEMENG_SECRET_KEY = process.env.LEMENG_SECRET_KEY || '';
 
-// OOS 配置
-const S3_ENDPOINT = process.env.S3_ENDPOINT || 'http://xinan-1.zos.ctyun.cn';
-const OOS_ACCESS_KEY = process.env.OOS_ACCESS_KEY || '';
-const OOS_SECRET_KEY = process.env.OOS_SECRET_KEY || '';
-const OOS_BUCKET = process.env.OOS_BUCKET || 'lemeng-datasource';
+// DuckDB 服务地址（内网）
+const DUCKDB_URL = process.env.DUCKDB_URL || 'http://duckdb:9000';
 
 const BASE_URL = "https://sharef.lemengcloud.com";
 const ENDPOINT_RETAIL_DETAIL = "/earth-gateway/amazon-retail/nhsoft.retail.business.posorder.findposorderdetail";
@@ -63,33 +59,7 @@ function buildBody(branchNums: number[], dates: string[], pageNumber: number, pa
   });
 }
 
-// ===== OOS 上传 =====
-function getS3Client(): S3Client {
-  return new S3Client({
-    endpoint: S3_ENDPOINT,
-    region: 'xinan-1',
-    credentials: {
-      accessKeyId: OOS_ACCESS_KEY,
-      secretAccessKey: OOS_SECRET_KEY,
-    },
-    // 天翼云 OOS 使用 path-style
-    forcePathStyle: true,
-  });
-}
-
-async function uploadToOOS(key: string, data: Buffer, contentType: string): Promise<string> {
-  const client = getS3Client();
-  const command = new PutObjectCommand({
-    Bucket: OOS_BUCKET,
-    Key: key,
-    Body: data,
-    ContentType: contentType,
-  });
-  await client.send(command);
-  return `${OOS_BUCKET}/${key}`;
-}
-
-// 将平铺的记录转为按订单分组的结构
+// 将嵌套结构扁平化（DuckDB 需要平铺字段）
 function flattenRecords(records: any[]): any[] {
   return records.map(r => ({
     order_no: r.order_no,
@@ -137,7 +107,6 @@ function flattenRecords(records: any[]): any[] {
     total_amount: r.total_amount,
     coupon_sale_share_money: r.coupon_sale_share_money,
     order_detail_item_serial_number: r.order_detail_item_serial_number,
-    // 扩展字段
     item_extend1: r.pos_item_matrix?.item_extend1,
   }));
 }
@@ -361,30 +330,56 @@ export async function POST(req: NextRequest) {
       page++;
     }
 
-    // ===== 持久化到 OOS =====
+    // ===== 调用 DuckDB 转换为 Parquet =====
     let storagePath = '';
-    if (allRecords.length > 0 && storageType === 'oos') {
-      if (!OOS_ACCESS_KEY || !OOS_SECRET_KEY) {
-        console.error(`[collect-lemeng] OOS credentials not configured, skipping upload`);
-        errorMessage += (errorMessage ? '; ' : '') + 'OOS credentials not configured, data not persisted';
-      } else {
-        try {
-          // 按日期组织路径: lemeng/retail_detail/2026-07-02.json
-          const dateStr = dates[0]; // 起始日期
-          const flatRecords = flattenRecords(allRecords);
-          const jsonBuffer = Buffer.from(JSON.stringify(flatRecords), 'utf-8');
+    if (allRecords.length > 0) {
+      try {
+        const flatRecords = flattenRecords(allRecords);
+        const dateStr = dates[0];
 
-          // 上传完整数据
-          const objectKey = `lemeng/retail_detail/${dateStr}.json`;
-          console.log(`[collect-lemeng] Uploading ${flatRecords.length} records to OOS: ${objectKey} (${(jsonBuffer.length / 1024).toFixed(1)}KB)`);
+        console.log(`[collect-lemeng] Calling DuckDB transform: ${flatRecords.length} records`);
 
-          const uploadedPath = await uploadToOOS(objectKey, jsonBuffer, 'application/json');
-          storagePath = uploadedPath;
-          console.log(`[collect-lemeng] Upload success: ${storagePath}`);
-        } catch (uploadErr: any) {
-          console.error(`[collect-lemeng] OOS upload failed: ${uploadErr.message}`);
-          errorMessage += (errorMessage ? '; ' : '') + `OOS upload failed: ${uploadErr.message}`;
+        const transformRes = await fetch(`${DUCKDB_URL}/transform`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            records: flatRecords,
+            config: {
+              date: dateStr,
+              source: 'lemeng',
+              partition_by: ['branch_num'],        // 按门店分片
+              dedupe_key: ['order_no', 'order_detail_num'],  // 去重键
+              required_fields: ['order_no', 'item_code', 'branch_num'],  // 必填字段
+              output_format: 'parquet',
+              compression: 'zstd',
+              base_path: `lemeng/retail_detail/${dateStr}`
+            }
+          })
+        });
+
+        if (!transformRes.ok) {
+          const errText = await transformRes.text();
+          throw new Error(`DuckDB transform failed: ${transformRes.status} ${errText}`);
         }
+
+        const transformResult = await transformRes.json();
+        console.log(`[collect-lemeng] DuckDB result:`, transformResult);
+
+        if (!transformResult.success) {
+          throw new Error(transformResult.error || 'Transform failed');
+        }
+
+        storagePath = transformResult.combined_file;
+        console.log(`[collect-lemeng] Parquet export success: ${storagePath} (${transformResult.partition_files?.length || 0} partitions)`);
+
+        // 如果有校验/去重问题，记录但不算失败
+        if (transformResult.invalid_records > 0 || transformResult.duplicates_removed > 0) {
+          console.warn(`[collect-lemeng] Data quality: ${transformResult.invalid_records} invalid, ${transformResult.duplicates_removed} duplicates`);
+        }
+
+      } catch (transformErr: any) {
+        console.error(`[collect-lemeng] DuckDB transform failed: ${transformErr.message}`);
+        errorMessage += (errorMessage ? '; ' : '') + `Transform failed: ${transformErr.message}`;
       }
     }
 
