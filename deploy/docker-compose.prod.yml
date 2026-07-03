@@ -19,6 +19,8 @@ services:
       # InsForge SDK（服务端 API Routes 使用）
       - INSFORGE_API_BASE=http://insforge:7130
       - INSFORGE_API_KEY=${ANON_KEY}
+      # 乐檬签名密钥（collect-lemeng function 需要）
+      - LEMENG_SECRET_KEY=${LEMENG_SECRET_KEY}
     depends_on:
       - insforge
     networks:

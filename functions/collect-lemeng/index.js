@@ -8,8 +8,6 @@
 
 // ===== 配置 =====
 const BASE_URL = "https://sharef.lemengcloud.com";
-// 从环境变量读取签名密钥（部署时配置）
-const SECRET_KEY = Deno.env.get("LEMENG_SECRET_KEY") || "";
 
 const ENDPOINT_RETAIL_DETAIL = "/earth-gateway/amazon-retail/nhsoft.retail.business.posorder.findposorderdetail";
 const ENDPOINT_RETAIL_COUNT = "/earth-gateway/amazon-retail/nhsoft.retail.business.posorder.countposorderdetail";
@@ -199,7 +197,13 @@ async function fetchAllPages(authToken, dates, branchNums, pageSize = 200) {
 module.exports = async function(req) {
   try {
     const body = await req.json();
-    const { credentials, params, storage_type, storage_path, manual } = body;
+    const { credentials, params, storage_type, storage_path, manual, secret_key } = body;
+
+    // 签名密钥：从请求体传入（由 API route 注入）
+    const SECRET_KEY = secret_key || "";
+    if (!SECRET_KEY) {
+      throw new Error("Missing secret_key for signature");
+    }
 
     // 凭证检查
     const authToken = credentials?.token;

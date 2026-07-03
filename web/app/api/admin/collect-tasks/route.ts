@@ -140,6 +140,10 @@ export async function PATCH(req: NextRequest) {
     }
   }
 
+  // 获取乐檬签名密钥（仅在 collect-lemeng 任务时需要）
+  const isLemeng = task.function_slug === 'collect-lemeng';
+  const lemengSecret = isLemeng ? process.env.LEMENG_SECRET_KEY || '' : '';
+
   const response = await fetch(
     `${INSFORGE_API_BASE}/functions/${task.function_slug}`,
     {
@@ -153,7 +157,8 @@ export async function PATCH(req: NextRequest) {
         params: task.params,
         storage_type: task.storage_type,
         storage_path: task.storage_path,
-        manual: true
+        manual: true,
+        secret_key: lemengSecret
       })
     }
   );
