@@ -164,5 +164,11 @@ async function checkTokenBlacklist(token: string): Promise<boolean> {
 }
 
 export const config = {
-  matcher: ["/", "/reports/:path*", "/sources", "/mobile", "/mobile/reports/:path*", "/admin/:path*"],
+  matcher: [
+    "/",
+    "/reports/:path*",
+    "/mobile",
+    "/mobile/reports/:path*",
+    "/admin/:path*"  // 新增这一行
+  ],
 };
