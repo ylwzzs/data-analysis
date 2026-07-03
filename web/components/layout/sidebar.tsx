@@ -7,7 +7,6 @@ import { cn } from "@/lib/utils";
 
 const menuItems = [
   { id: "reports", label: "报表中心", icon: "📊", href: "/" },
-  { id: "sources", label: "数据源", icon: "📁", href: "/sources" },
   { id: "settings", label: "设置", icon: "⚙️", href: "/settings" },
 ];
 
