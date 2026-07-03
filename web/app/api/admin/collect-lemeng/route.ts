@@ -2,11 +2,18 @@
 // 直接在 Next.js 服务端调用乐檬 API，避开 Deno runtime 问题
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@insforge/sdk';
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import crypto from 'crypto';
 
 const INSFORGE_API_BASE = process.env.INSFORGE_API_BASE!;
 const INSFORGE_API_KEY = process.env.INSFORGE_API_KEY!;
 const LEMENG_SECRET_KEY = process.env.LEMENG_SECRET_KEY || '';
+
+// OOS 配置
+const S3_ENDPOINT = process.env.S3_ENDPOINT || 'http://xinan-1.zos.ctyun.cn';
+const OOS_ACCESS_KEY = process.env.OOS_ACCESS_KEY || '';
+const OOS_SECRET_KEY = process.env.OOS_SECRET_KEY || '';
+const OOS_BUCKET = process.env.OOS_BUCKET || 'lemeng-datasource';
 
 const BASE_URL = "https://sharef.lemengcloud.com";
 const ENDPOINT_RETAIL_DETAIL = "/earth-gateway/amazon-retail/nhsoft.retail.business.posorder.findposorderdetail";
@@ -19,6 +26,7 @@ const ALL_BRANCH_NUMS = [
   1,2,3,4,5,6,7,10,11,12,13,14,15,17,18,19,20,21,22,24,25,26,27,28,29,30,31,32,33,34,35,36,37,40,42,43,44,46,47,48,49,50,51,52,53,54,57,58,60,61,62,63,64,65,66,67,68,70,72,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,155,156,157,158,159,160,161,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,179,180,181,182,183,184,185,186,187,188,189,190,191,192,193,194,195,196,197,198,199,200,201,202,203,204,205,206,207,208,209,210,211,212,213,214,215,216,217,218,219,220,221,222,223,224,225,226,227,228,229,230,231,232,233,234,235,236,237,238,239,240,241,242,243,244,245,246,247,248,249,250,251,252,253,254,255,888
 ];
 
+// ===== 签名算法 =====
 function generateSignature(authToken: string, timestamp: string, nonce: string, branchNums: string, scopeIds: string, urlPath: string, bodyStr: string, secretKey: string): string {
   const signStr = authToken + timestamp + nonce + branchNums + scopeIds + secretKey + urlPath + bodyStr + secretKey;
   return crypto.createHash('sha256').update(signStr, 'utf8').digest('hex');
@@ -55,7 +63,86 @@ function buildBody(branchNums: number[], dates: string[], pageNumber: number, pa
   });
 }
 
-// 带超时的 fetch
+// ===== OOS 上传 =====
+function getS3Client(): S3Client {
+  return new S3Client({
+    endpoint: S3_ENDPOINT,
+    region: 'xinan-1',
+    credentials: {
+      accessKeyId: OOS_ACCESS_KEY,
+      secretAccessKey: OOS_SECRET_KEY,
+    },
+    // 天翼云 OOS 使用 path-style
+    forcePathStyle: true,
+  });
+}
+
+async function uploadToOOS(key: string, data: Buffer, contentType: string): Promise<string> {
+  const client = getS3Client();
+  const command = new PutObjectCommand({
+    Bucket: OOS_BUCKET,
+    Key: key,
+    Body: data,
+    ContentType: contentType,
+  });
+  await client.send(command);
+  return `${OOS_BUCKET}/${key}`;
+}
+
+// 将平铺的记录转为按订单分组的结构
+function flattenRecords(records: any[]): any[] {
+  return records.map(r => ({
+    order_no: r.order_no,
+    order_detail_num: r.order_detail_num,
+    order_time: r.order_time,
+    order_sale_channel: r.order_sale_channel,
+    order_sale_type: r.order_sale_type,
+    order_payee: r.order_payee,
+    order_sold_by: r.order_sold_by,
+    order_detail_bizday: r.order_detail_bizday,
+    branch_num: r.branch?.branch_num,
+    branch_code: r.branch?.branch_code,
+    branch_name: r.branch?.branch_name,
+    item_num: r.pos_item?.item_num,
+    item_code: r.pos_item?.item_code,
+    item_name: r.pos_item?.pos_item_name || r.pos_item?.item_name,
+    item_category: r.pos_item?.item_category,
+    item_spec: r.pos_item?.item_spec,
+    item_unit: r.pos_item?.item_unit,
+    department: r.pos_item?.department,
+    item_regular_price: r.pos_item?.item_regular_price,
+    item_cost_price: r.pos_item?.item_cost_price,
+    supplier_num: r.supplier?.supplier_num,
+    supplier_name: r.supplier?.supplier_name,
+    supplier_code: r.supplier?.supplier_code,
+    state: r.state,
+    management_style_type: r.management_style_type,
+    order_detail_price: r.order_detail_price,
+    order_detail_cost: r.order_detail_cost,
+    order_detail_grade_cost: r.order_detail_grade_cost,
+    sale_money: r.sale_money,
+    discount_money: r.discount_money,
+    cost: r.cost,
+    profit: r.profit,
+    sale_profit_rate: r.sale_profit_rate,
+    discount_rate: r.discount_rate,
+    overall_discount_rate: r.overall_discount_rate,
+    payment_receipt_money: r.payment_receipt_money,
+    order_detail_discount: r.order_detail_discount,
+    order_detail_share_discount: r.order_detail_share_discount,
+    order_detail_payment_money: r.order_detail_payment_money,
+    tax_money: r.tax_money,
+    item_tax_rate: r.item_tax_rate,
+    total_no_tax_money: r.total_no_tax_money,
+    total_amount: r.total_amount,
+    coupon_sale_share_money: r.coupon_sale_share_money,
+    order_detail_item_serial_number: r.order_detail_item_serial_number,
+    // 扩展字段
+    item_extend1: r.pos_item_matrix?.item_extend1,
+  }));
+}
+
+// ===== HTTP 工具 =====
 async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -95,11 +182,9 @@ async function callLemengApi(urlPath: string, authToken: string, bodyStr: string
         return { ok: true, data };
       }
 
-      // HTTP 非 200，返回错误详情
       const errorText = await response.text();
       return { ok: false, status: response.status, error: `HTTP ${response.status}: ${errorText.slice(0, 200)}` };
     } catch (err: any) {
-      // 网络错误或超时
       if (attempt < maxRetries - 1) {
         console.log(`[collect-lemeng] Attempt ${attempt + 1} error: ${err.message}, retrying after 2s...`);
         await new Promise(r => setTimeout(r, 2000));
@@ -113,17 +198,14 @@ async function callLemengApi(urlPath: string, authToken: string, bodyStr: string
 
 // 使用中国时区获取昨天的日期
 function getYesterdayChina(): string {
-  // 中国时区 = UTC+8
   const now = new Date();
-  // 转换为中国时间
   const chinaTime = new Date(now.getTime() + 8 * 60 * 60 * 1000);
-  // 减一天
   chinaTime.setDate(chinaTime.getDate() - 1);
   return chinaTime.toISOString().split('T')[0];
 }
 
-// 写入采集日志（成功或失败）
-async function writeLog(client: any, taskId: string, startedAt: Date, finishedAt: Date, status: string, rowsCollected: number, errorMessage?: string) {
+// 写入采集日志
+async function writeLog(client: any, taskId: string, startedAt: Date, finishedAt: Date, status: string, rowsCollected: number, errorMessage?: string, storagePath?: string) {
   await client.database
     .from('collect_logs')
     .insert([{
@@ -133,10 +215,12 @@ async function writeLog(client: any, taskId: string, startedAt: Date, finishedAt
       finished_at: finishedAt.toISOString(),
       duration_ms: finishedAt.getTime() - startedAt.getTime(),
       rows_collected: rowsCollected,
-      error_message: errorMessage || null
+      error_message: errorMessage || null,
+      response_summary: storagePath ? { storage_path: storagePath } : null,
     }]);
 }
 
+// ===== 主流程 =====
 export async function POST(req: NextRequest) {
   const startedAt = new Date();
   let allRecords: any[] = [];
@@ -190,8 +274,9 @@ export async function POST(req: NextRequest) {
     const dates = params.dates || [getYesterdayChina(), getYesterdayChina()];
     const branchNums = params.branch_nums || ALL_BRANCH_NUMS;
     const pageSize = params.page_size || 200;
+    const storageType = task.storage_type || 'oos';
 
-    console.log(`[collect-lemeng] Starting: dates=${dates[0]}~${dates[1]}, branches=${branchNums.length}`);
+    console.log(`[collect-lemeng] Starting: dates=${dates[0]}~${dates[1]}, branches=${branchNums.length}, storage=${storageType}`);
 
     const branchNumsStr = branchNums.join(',');
 
@@ -202,14 +287,12 @@ export async function POST(req: NextRequest) {
     if (warmResult.ok && warmResult.data?.code === 0) {
       console.log(`[collect-lemeng] Warm-up success`);
     } else if (warmResult.ok && warmResult.data?.code === -1) {
-      // code=-1 表示 token 过期，直接失败
       errorMessage = `Token expired: ${warmResult.data?.message}`;
       console.error(`[collect-lemeng] Warm-up failed: ${errorMessage}`);
       const finishedAt = new Date();
       await writeLog(client, task_id, startedAt, finishedAt, 'failed', 0, errorMessage);
       return NextResponse.json({ success: false, error: errorMessage }, { status: 401 });
     } else {
-      // HTTP 非 200，警告但继续尝试（与 Python 行为一致）
       console.warn(`[collect-lemeng] Warm-up HTTP ${warmResult.status}: ${warmResult.error}, continuing...`);
     }
 
@@ -223,7 +306,6 @@ export async function POST(req: NextRequest) {
       console.log(`[collect-lemeng] Total count: ${total}`);
     } else {
       console.warn(`[collect-lemeng] Count query failed, will paginate without limit`);
-      // 无总数时设置一个安全上限
       total = 10000;
     }
 
@@ -240,7 +322,7 @@ export async function POST(req: NextRequest) {
 
     // ===== 分页拉取 =====
     const totalPages = Math.ceil(total / pageSize);
-    const maxPages = 100; // 安全上限（防止 count 失败时无限循环）
+    const maxPages = 100;
     let page = 1;
     let consecutiveErrors = 0;
 
@@ -252,7 +334,6 @@ export async function POST(req: NextRequest) {
         console.error(`[collect-lemeng] Page ${page} HTTP error: ${result.error}`);
         consecutiveErrors++;
         if (consecutiveErrors >= 3) {
-          // 连续 3 页失败，终止
           errorMessage = `Consecutive 3 pages failed, stopped at page ${page}`;
           break;
         }
@@ -271,17 +352,40 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
-      // 成功，重置错误计数
       consecutiveErrors = 0;
       const records = result.data.result || [];
       allRecords.push(...records);
       console.log(`[collect-lemeng] Page ${page}/${totalPages}: ${records.length} rows, total ${allRecords.length}`);
 
-      if (records.length < pageSize) {
-        // 本页不满，说明数据已拉完
-        break;
-      }
+      if (records.length < pageSize) break;
       page++;
+    }
+
+    // ===== 持久化到 OOS =====
+    let storagePath = '';
+    if (allRecords.length > 0 && storageType === 'oos') {
+      if (!OOS_ACCESS_KEY || !OOS_SECRET_KEY) {
+        console.error(`[collect-lemeng] OOS credentials not configured, skipping upload`);
+        errorMessage += (errorMessage ? '; ' : '') + 'OOS credentials not configured, data not persisted';
+      } else {
+        try {
+          // 按日期组织路径: lemeng/retail_detail/2026-07-02.json
+          const dateStr = dates[0]; // 起始日期
+          const flatRecords = flattenRecords(allRecords);
+          const jsonBuffer = Buffer.from(JSON.stringify(flatRecords), 'utf-8');
+
+          // 上传完整数据
+          const objectKey = `lemeng/retail_detail/${dateStr}.json`;
+          console.log(`[collect-lemeng] Uploading ${flatRecords.length} records to OOS: ${objectKey} (${(jsonBuffer.length / 1024).toFixed(1)}KB)`);
+
+          const uploadedPath = await uploadToOOS(objectKey, jsonBuffer, 'application/json');
+          storagePath = uploadedPath;
+          console.log(`[collect-lemeng] Upload success: ${storagePath}`);
+        } catch (uploadErr: any) {
+          console.error(`[collect-lemeng] OOS upload failed: ${uploadErr.message}`);
+          errorMessage += (errorMessage ? '; ' : '') + `OOS upload failed: ${uploadErr.message}`;
+        }
+      }
     }
 
     // ===== 更新任务状态和日志 =====
@@ -292,7 +396,7 @@ export async function POST(req: NextRequest) {
       .eq('id', task_id);
 
     const finalStatus = errorMessage ? 'partial' : 'success';
-    await writeLog(client, task_id, startedAt, finishedAt, finalStatus, allRecords.length, errorMessage || undefined);
+    await writeLog(client, task_id, startedAt, finishedAt, finalStatus, allRecords.length, errorMessage || undefined, storagePath || undefined);
 
     return NextResponse.json({
       success: !errorMessage,
@@ -301,8 +405,9 @@ export async function POST(req: NextRequest) {
       branches: branchNums.length,
       total_estimated: total,
       pages_fetched: page - 1,
+      storage_path: storagePath || undefined,
       error: errorMessage || undefined,
-      sample: allRecords.slice(0, 2)
+      sample: allRecords.slice(0, 2),
     });
 
   } catch (error: any) {
@@ -310,7 +415,6 @@ export async function POST(req: NextRequest) {
     const finishedAt = new Date();
     errorMessage = error.message;
 
-    // 尝试写失败日志（可能 client 未初始化）
     try {
       const client = createClient({ baseUrl: INSFORGE_API_BASE, anonKey: INSFORGE_API_KEY });
       const body = await req.json();
