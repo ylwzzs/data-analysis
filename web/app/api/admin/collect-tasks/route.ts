@@ -152,9 +152,6 @@ export async function PATCH(req: NextRequest) {
   }
 
   // 其他任务走 Edge Function
-  const isLemeng = task.function_slug === 'collect-lemeng';
-  const lemengSecret = isLemeng ? process.env.LEMENG_SECRET_KEY || '' : '';
-
   const response = await fetch(
     `${INSFORGE_API_BASE}/functions/${task.function_slug}`,
     {
@@ -168,8 +165,7 @@ export async function PATCH(req: NextRequest) {
         params: task.params,
         storage_type: task.storage_type,
         storage_path: task.storage_path,
-        manual: true,
-        secret_key: lemengSecret
+        manual: true
       })
     }
   );
