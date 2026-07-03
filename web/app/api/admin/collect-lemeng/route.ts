@@ -174,7 +174,7 @@ function getYesterdayChina(): string {
 }
 
 // 写入采集日志
-async function writeLog(client: any, taskId: string, startedAt: Date, finishedAt: Date, status: string, rowsCollected: number, errorMessage?: string, storagePath?: string) {
+async function writeLog(client: any, taskId: string, startedAt: Date, finishedAt: Date, status: string, rowsCollected: number, errorMessage?: string, storagePath?: string, verification?: { api_total: number; missing: number; verified: boolean }) {
   await client.database
     .from('collect_logs')
     .insert([{
@@ -185,8 +185,57 @@ async function writeLog(client: any, taskId: string, startedAt: Date, finishedAt
       duration_ms: finishedAt.getTime() - startedAt.getTime(),
       rows_collected: rowsCollected,
       error_message: errorMessage || null,
-      response_summary: storagePath ? { storage_path: storagePath } : null,
+      response_summary: storagePath ? {
+        storage_path: storagePath,
+        verification: verification || null,
+      } : null,
     }]);
+}
+
+// 发送企微通知
+async function notifyWecom(title: string, content: string) {
+  const corpid = process.env.WECOM_CORP_ID;
+  const secret = process.env.WECOM_SECRET;
+  const agentid = process.env.WECOM_AGENT_ID;
+
+  if (!corpid || !secret || !agentid) {
+    console.warn('[notifyWecom] Missing WeChat work credentials');
+    return;
+  }
+
+  try {
+    // 获取 access_token
+    const tokenRes = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${corpid}&corpsecret=${secret}`);
+    const tokenData = await tokenRes.json();
+
+    if (tokenData.errcode !== 0) {
+      console.error('[notifyWecom] Failed to get token:', tokenData.errmsg);
+      return;
+    }
+
+    const accessToken = tokenData.access_token;
+
+    // 发送应用消息（发给管理员）
+    const sendRes = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=${accessToken}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        touser: 'ZhangDuo',  // 发给张铎
+        msgtype: 'markdown',
+        agentid: parseInt(agentid),
+        markdown: { content: `### ${title}\n${content}` },
+      }),
+    });
+
+    const sendData = await sendRes.json();
+    if (sendData.errcode !== 0) {
+      console.error('[notifyWecom] Failed to send:', sendData.errmsg);
+    } else {
+      console.log('[notifyWecom] Notification sent');
+    }
+  } catch (err: any) {
+    console.error('[notifyWecom] Error:', err.message);
+  }
 }
 
 // ===== 主流程 =====
@@ -383,6 +432,29 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // ===== 全量对账：验证数据完整性 =====
+    const verification = {
+      api_total: total,
+      collected: allRecords.length,
+      missing: total - allRecords.length,
+      verified: allRecords.length >= total,
+    };
+
+    if (!verification.verified) {
+      const missingPercent = ((verification.missing / total) * 100).toFixed(1);
+      console.error(`[collect-lemeng] ⚠️ 数据不完整：采集 ${allRecords.length} 条，API 总数 ${total}，缺少 ${verification.missing} 条 (${missingPercent}%)`);
+
+      // 发送企微告警
+      await notifyWecom(
+        '⚠️ 乐檬数据采集不完整',
+        `**日期**: ${dates[0]}\n**采集数**: ${allRecords.length}\n**API总数**: ${total}\n**缺少**: ${verification.missing} 条 (${missingPercent}%)\n**建议**: 请检查网络或重新采集`
+      );
+
+      errorMessage += (errorMessage ? '; ' : '') + `数据不完整: 缺少 ${verification.missing} 条`;
+    } else {
+      console.log(`[collect-lemeng] ✅ 对账通过: ${allRecords.length}/${total} 条`);
+    }
+
     // ===== 更新任务状态和日志 =====
     const finishedAt = new Date();
     await client.database
@@ -391,14 +463,28 @@ export async function POST(req: NextRequest) {
       .eq('id', task_id);
 
     const finalStatus = errorMessage ? 'partial' : 'success';
-    await writeLog(client, task_id, startedAt, finishedAt, finalStatus, allRecords.length, errorMessage || undefined, storagePath || undefined);
+    await writeLog(
+      client,
+      task_id,
+      startedAt,
+      finishedAt,
+      finalStatus,
+      allRecords.length,
+      errorMessage || undefined,
+      storagePath || undefined,
+      { api_total: total, missing: verification.missing, verified: verification.verified }
+    );
 
     return NextResponse.json({
-      success: !errorMessage,
+      success: verification.verified && !errorMessage,
       rows_collected: allRecords.length,
       dates,
       branches: branchNums.length,
-      total_estimated: total,
+      api_total: total,
+      verification: {
+        verified: verification.verified,
+        missing: verification.missing,
+      },
       pages_fetched: page - 1,
       storage_path: storagePath || undefined,
       error: errorMessage || undefined,

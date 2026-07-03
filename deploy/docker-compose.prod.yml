@@ -28,6 +28,10 @@ services:
       - OOS_ACCESS_KEY=${OOS_ACCESS_KEY}
       - OOS_SECRET_KEY=${OOS_SECRET_KEY}
       - OOS_BUCKET=${OOS_BUCKET:-lemeng-datasource}
+      # 企业微信（采集告警通知）
+      - WECOM_CORP_ID=${WECOM_CORP_ID}
+      - WECOM_SECRET=${WECOM_SECRET}
+      - WECOM_AGENT_ID=${WECOM_AGENT_ID}
     depends_on:
       - insforge
     networks:
