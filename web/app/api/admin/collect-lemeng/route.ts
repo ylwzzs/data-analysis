@@ -238,11 +238,150 @@ async function notifyWecom(title: string, content: string) {
   }
 }
 
+// ===== 单次采集 + 转换 =====
+interface CollectResult {
+  records: any[];
+  apiTotal: number;
+  storagePath: string;
+  error: string;
+}
+
+async function collectOnce(
+  authToken: string,
+  branchNums: number[],
+  branchNumsStr: string,
+  dates: string[],
+  pageSize: number,
+): Promise<CollectResult> {
+  const result: CollectResult = { records: [], apiTotal: 0, storagePath: '', error: '' };
+
+  // ===== 预热：激活 Token 会话 =====
+  const warmBody = buildBody(branchNums, dates, 1, 5);
+  const warmResult = await callLemengApi(ENDPOINT_RETAIL_DETAIL, authToken, warmBody, branchNumsStr);
+
+  if (warmResult.ok && warmResult.data?.code === 0) {
+    console.log(`[collect-lemeng] Warm-up success`);
+  } else if (warmResult.ok && warmResult.data?.code === -1) {
+    result.error = `Token expired: ${warmResult.data?.message}`;
+    return result;
+  } else {
+    console.warn(`[collect-lemeng] Warm-up HTTP ${warmResult.status}: ${warmResult.error}, continuing...`);
+  }
+
+  // ===== 查询总数 =====
+  const countBody = buildBody(branchNums, dates, 1, pageSize);
+  const countResult = await callLemengApi(ENDPOINT_RETAIL_COUNT, authToken, countBody, branchNumsStr);
+
+  if (countResult.ok && countResult.data?.code === 0) {
+    result.apiTotal = countResult.data.result || 0;
+    console.log(`[collect-lemeng] Total count: ${result.apiTotal}`);
+  } else {
+    console.warn(`[collect-lemeng] Count query failed, will paginate without limit`);
+    result.apiTotal = 10000;
+  }
+
+  if (result.apiTotal === 0) {
+    return result;
+  }
+
+  // ===== 分页拉取 =====
+  const totalPages = Math.ceil(result.apiTotal / pageSize);
+  const maxPages = 100;
+  let page = 1;
+  let consecutiveErrors = 0;
+
+  while (page <= totalPages && page <= maxPages) {
+    const bodyStr = buildBody(branchNums, dates, page, pageSize);
+    const pageResult = await callLemengApi(ENDPOINT_RETAIL_DETAIL, authToken, bodyStr, branchNumsStr);
+
+    if (!pageResult.ok) {
+      console.error(`[collect-lemeng] Page ${page} HTTP error: ${pageResult.error}`);
+      consecutiveErrors++;
+      if (consecutiveErrors >= 3) {
+        result.error = `Consecutive 3 pages failed, stopped at page ${page}`;
+        break;
+      }
+      page++;
+      continue;
+    }
+
+    if (pageResult.data.code !== 0) {
+      console.error(`[collect-lemeng] Page ${page} API error: ${pageResult.data.message}`);
+      consecutiveErrors++;
+      if (consecutiveErrors >= 3) {
+        result.error = `Consecutive 3 API errors, stopped at page ${page}`;
+        break;
+      }
+      page++;
+      continue;
+    }
+
+    consecutiveErrors = 0;
+    const records = pageResult.data.result || [];
+    result.records.push(...records);
+    console.log(`[collect-lemeng] Page ${page}/${totalPages}: ${records.length} rows, total ${result.records.length}`);
+
+    if (records.length < pageSize) break;
+    page++;
+  }
+
+  // ===== 调用 DuckDB 转换为 Parquet =====
+  if (result.records.length > 0) {
+    try {
+      const flatRecords = flattenRecords(result.records);
+      const dateStr = dates[0];
+
+      console.log(`[collect-lemeng] Calling DuckDB transform: ${flatRecords.length} records`);
+
+      const transformRes = await fetch(`${DUCKDB_URL}/transform`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          records: flatRecords,
+          config: {
+            date: dateStr,
+            source: 'lemeng',
+            partition_by: ['branch_num'],
+            dedupe_key: ['order_no', 'order_detail_num'],
+            required_fields: ['order_no', 'item_code', 'branch_num'],
+            output_format: 'parquet',
+            compression: 'zstd',
+            base_path: `lemeng/retail_detail/${dateStr}`
+          }
+        })
+      });
+
+      if (!transformRes.ok) {
+        const errText = await transformRes.text();
+        throw new Error(`DuckDB transform failed: ${transformRes.status} ${errText}`);
+      }
+
+      const transformResult = await transformRes.json();
+      if (!transformResult.success) {
+        throw new Error(transformResult.error || 'Transform failed');
+      }
+
+      result.storagePath = transformResult.combined_file;
+      console.log(`[collect-lemeng] Parquet export success: ${result.storagePath}`);
+
+      if (transformResult.invalid_records > 0 || transformResult.duplicates_removed > 0) {
+        console.warn(`[collect-lemeng] Data quality: ${transformResult.invalid_records} invalid, ${transformResult.duplicates_removed} duplicates`);
+      }
+    } catch (transformErr: any) {
+      console.error(`[collect-lemeng] DuckDB transform failed: ${transformErr.message}`);
+      result.error += (result.error ? '; ' : '') + `Transform failed: ${transformErr.message}`;
+    }
+  }
+
+  return result;
+}
+
+// 对账重试最大次数
+const MAX_VERIFY_RETRIES = 3;
+
 // ===== 主流程 =====
 export async function POST(req: NextRequest) {
   const startedAt = new Date();
-  let allRecords: any[] = [];
-  let errorMessage = '';
 
   try {
     if (!LEMENG_SECRET_KEY) {
@@ -292,167 +431,66 @@ export async function POST(req: NextRequest) {
     const dates = params.dates || [getYesterdayChina(), getYesterdayChina()];
     const branchNums = params.branch_nums || ALL_BRANCH_NUMS;
     const pageSize = params.page_size || 200;
-    const storageType = task.storage_type || 'oos';
 
-    console.log(`[collect-lemeng] Starting: dates=${dates[0]}~${dates[1]}, branches=${branchNums.length}, storage=${storageType}`);
+    console.log(`[collect-lemeng] Starting: dates=${dates[0]}~${dates[1]}, branches=${branchNums.length}`);
 
     const branchNumsStr = branchNums.join(',');
 
-    // ===== 预热：激活 Token 会话 =====
-    const warmBody = buildBody(branchNums, dates, 1, 5);
-    const warmResult = await callLemengApi(ENDPOINT_RETAIL_DETAIL, authToken, warmBody, branchNumsStr);
+    // ===== 对账重试循环 =====
+    let lastResult: CollectResult = { records: [], apiTotal: 0, storagePath: '', error: '' };
+    let verified = false;
+    let retryCount = 0;
 
-    if (warmResult.ok && warmResult.data?.code === 0) {
-      console.log(`[collect-lemeng] Warm-up success`);
-    } else if (warmResult.ok && warmResult.data?.code === -1) {
-      errorMessage = `Token expired: ${warmResult.data?.message}`;
-      console.error(`[collect-lemeng] Warm-up failed: ${errorMessage}`);
-      const finishedAt = new Date();
-      await writeLog(client, task_id, startedAt, finishedAt, 'failed', 0, errorMessage);
-      return NextResponse.json({ success: false, error: errorMessage }, { status: 401 });
-    } else {
-      console.warn(`[collect-lemeng] Warm-up HTTP ${warmResult.status}: ${warmResult.error}, continuing...`);
-    }
+    for (let attempt = 1; attempt <= MAX_VERIFY_RETRIES; attempt++) {
+      console.log(`[collect-lemeng] === 采集第 ${attempt} 次 ${attempt > 1 ? '(对账重试)' : ''} ===`);
 
-    // ===== 查询总数 =====
-    const countBody = buildBody(branchNums, dates, 1, pageSize);
-    const countResult = await callLemengApi(ENDPOINT_RETAIL_COUNT, authToken, countBody, branchNumsStr);
+      lastResult = await collectOnce(authToken, branchNums, branchNumsStr, dates, pageSize);
 
-    let total = 0;
-    if (countResult.ok && countResult.data?.code === 0) {
-      total = countResult.data.result || 0;
-      console.log(`[collect-lemeng] Total count: ${total}`);
-    } else {
-      console.warn(`[collect-lemeng] Count query failed, will paginate without limit`);
-      total = 10000;
-    }
-
-    if (total === 0) {
-      console.log(`[collect-lemeng] No data for this date range`);
-      const finishedAt = new Date();
-      await client.database
-        .from('collect_tasks')
-        .update({ last_run_at: finishedAt.toISOString() })
-        .eq('id', task_id);
-      await writeLog(client, task_id, startedAt, finishedAt, 'success', 0);
-      return NextResponse.json({ success: true, rows_collected: 0, dates, branches: branchNums.length });
-    }
-
-    // ===== 分页拉取 =====
-    const totalPages = Math.ceil(total / pageSize);
-    const maxPages = 100;
-    let page = 1;
-    let consecutiveErrors = 0;
-
-    while (page <= totalPages && page <= maxPages) {
-      const bodyStr = buildBody(branchNums, dates, page, pageSize);
-      const result = await callLemengApi(ENDPOINT_RETAIL_DETAIL, authToken, bodyStr, branchNumsStr);
-
-      if (!result.ok) {
-        console.error(`[collect-lemeng] Page ${page} HTTP error: ${result.error}`);
-        consecutiveErrors++;
-        if (consecutiveErrors >= 3) {
-          errorMessage = `Consecutive 3 pages failed, stopped at page ${page}`;
-          break;
-        }
-        page++;
-        continue;
+      // Token 过期直接退出，不重试
+      if (lastResult.error.startsWith('Token expired')) {
+        const finishedAt = new Date();
+        await writeLog(client, task_id, startedAt, finishedAt, 'failed', 0, lastResult.error);
+        return NextResponse.json({ success: false, error: lastResult.error }, { status: 401 });
       }
 
-      if (result.data.code !== 0) {
-        console.error(`[collect-lemeng] Page ${page} API error: ${result.data.message}`);
-        consecutiveErrors++;
-        if (consecutiveErrors >= 3) {
-          errorMessage = `Consecutive 3 API errors, stopped at page ${page}`;
-          break;
-        }
-        page++;
-        continue;
+      // 无数据直接退出
+      if (lastResult.apiTotal === 0) {
+        const finishedAt = new Date();
+        await client.database
+          .from('collect_tasks')
+          .update({ last_run_at: finishedAt.toISOString() })
+          .eq('id', task_id);
+        await writeLog(client, task_id, startedAt, finishedAt, 'success', 0);
+        return NextResponse.json({ success: true, rows_collected: 0, dates, branches: branchNums.length });
       }
 
-      consecutiveErrors = 0;
-      const records = result.data.result || [];
-      allRecords.push(...records);
-      console.log(`[collect-lemeng] Page ${page}/${totalPages}: ${records.length} rows, total ${allRecords.length}`);
+      // 全量对账
+      const missing = lastResult.apiTotal - lastResult.records.length;
+      verified = lastResult.records.length >= lastResult.apiTotal;
 
-      if (records.length < pageSize) break;
-      page++;
-    }
-
-    // ===== 调用 DuckDB 转换为 Parquet =====
-    let storagePath = '';
-    if (allRecords.length > 0) {
-      try {
-        const flatRecords = flattenRecords(allRecords);
-        const dateStr = dates[0];
-
-        console.log(`[collect-lemeng] Calling DuckDB transform: ${flatRecords.length} records`);
-
-        const transformRes = await fetch(`${DUCKDB_URL}/transform`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            records: flatRecords,
-            config: {
-              date: dateStr,
-              source: 'lemeng',
-              partition_by: ['branch_num'],        // 按门店分片
-              dedupe_key: ['order_no', 'order_detail_num'],  // 去重键
-              required_fields: ['order_no', 'item_code', 'branch_num'],  // 必填字段
-              output_format: 'parquet',
-              compression: 'zstd',
-              base_path: `lemeng/retail_detail/${dateStr}`
-            }
-          })
-        });
-
-        if (!transformRes.ok) {
-          const errText = await transformRes.text();
-          throw new Error(`DuckDB transform failed: ${transformRes.status} ${errText}`);
-        }
-
-        const transformResult = await transformRes.json();
-        console.log(`[collect-lemeng] DuckDB result:`, transformResult);
-
-        if (!transformResult.success) {
-          throw new Error(transformResult.error || 'Transform failed');
-        }
-
-        storagePath = transformResult.combined_file;
-        console.log(`[collect-lemeng] Parquet export success: ${storagePath} (${transformResult.partition_files?.length || 0} partitions)`);
-
-        // 如果有校验/去重问题，记录但不算失败
-        if (transformResult.invalid_records > 0 || transformResult.duplicates_removed > 0) {
-          console.warn(`[collect-lemeng] Data quality: ${transformResult.invalid_records} invalid, ${transformResult.duplicates_removed} duplicates`);
-        }
-
-      } catch (transformErr: any) {
-        console.error(`[collect-lemeng] DuckDB transform failed: ${transformErr.message}`);
-        errorMessage += (errorMessage ? '; ' : '') + `Transform failed: ${transformErr.message}`;
+      if (verified) {
+        console.log(`[collect-lemeng] ✅ 对账通过: ${lastResult.records.length}/${lastResult.apiTotal} 条`);
+        break;
       }
-    }
 
-    // ===== 全量对账：验证数据完整性 =====
-    const verification = {
-      api_total: total,
-      collected: allRecords.length,
-      missing: total - allRecords.length,
-      verified: allRecords.length >= total,
-    };
+      // 对账失败
+      const missingPercent = ((missing / lastResult.apiTotal) * 100).toFixed(1);
+      retryCount = attempt;
 
-    if (!verification.verified) {
-      const missingPercent = ((verification.missing / total) * 100).toFixed(1);
-      console.error(`[collect-lemeng] ⚠️ 数据不完整：采集 ${allRecords.length} 条，API 总数 ${total}，缺少 ${verification.missing} 条 (${missingPercent}%)`);
+      if (attempt < MAX_VERIFY_RETRIES) {
+        console.warn(`[collect-lemeng] ⚠️ 第 ${attempt} 次对账失败：采集 ${lastResult.records.length} 条，API 总数 ${lastResult.apiTotal}，缺少 ${missing} 条 (${missingPercent}%)，5 秒后重试...`);
+        await new Promise(r => setTimeout(r, 5000));
+      } else {
+        console.error(`[collect-lemeng] ❌ 第 ${attempt} 次对账仍失败：采集 ${lastResult.records.length} 条，API 总数 ${lastResult.apiTotal}，缺少 ${missing} 条 (${missingPercent}%)，已用尽重试次数`);
 
-      // 发送企微告警
-      await notifyWecom(
-        '⚠️ 乐檬数据采集不完整',
-        `**日期**: ${dates[0]}\n**采集数**: ${allRecords.length}\n**API总数**: ${total}\n**缺少**: ${verification.missing} 条 (${missingPercent}%)\n**建议**: 请检查网络或重新采集`
-      );
+        // 3 次都失败，发送企微告警
+        await notifyWecom(
+          '❌ 乐檬数据采集不完整（已重试3次）',
+          `**日期**: ${dates[0]}\n**采集数**: ${lastResult.records.length}\n**API总数**: ${lastResult.apiTotal}\n**缺少**: ${missing} 条 (${missingPercent}%)\n**重试**: ${MAX_VERIFY_RETRIES} 次均失败\n**建议**: 请检查网络或手动重新采集`
+        );
 
-      errorMessage += (errorMessage ? '; ' : '') + `数据不完整: 缺少 ${verification.missing} 条`;
-    } else {
-      console.log(`[collect-lemeng] ✅ 对账通过: ${allRecords.length}/${total} 条`);
+        lastResult.error += (lastResult.error ? '; ' : '') + `对账失败(重试${MAX_VERIFY_RETRIES}次): 缺少 ${missing} 条`;
+      }
     }
 
     // ===== 更新任务状态和日志 =====
@@ -462,46 +500,42 @@ export async function POST(req: NextRequest) {
       .update({ last_run_at: finishedAt.toISOString() })
       .eq('id', task_id);
 
-    const finalStatus = errorMessage ? 'partial' : 'success';
+    const missing = lastResult.apiTotal - lastResult.records.length;
+    const finalStatus = lastResult.error ? 'partial' : 'success';
     await writeLog(
       client,
       task_id,
       startedAt,
       finishedAt,
       finalStatus,
-      allRecords.length,
-      errorMessage || undefined,
-      storagePath || undefined,
-      { api_total: total, missing: verification.missing, verified: verification.verified }
+      lastResult.records.length,
+      lastResult.error || undefined,
+      lastResult.storagePath || undefined,
+      { api_total: lastResult.apiTotal, missing, verified }
     );
 
     return NextResponse.json({
-      success: verification.verified && !errorMessage,
-      rows_collected: allRecords.length,
+      success: verified && !lastResult.error,
+      rows_collected: lastResult.records.length,
       dates,
       branches: branchNums.length,
-      api_total: total,
-      verification: {
-        verified: verification.verified,
-        missing: verification.missing,
-      },
-      pages_fetched: page - 1,
-      storage_path: storagePath || undefined,
-      error: errorMessage || undefined,
-      sample: allRecords.slice(0, 2),
+      api_total: lastResult.apiTotal,
+      verification: { verified, missing, retries: retryCount },
+      storage_path: lastResult.storagePath || undefined,
+      error: lastResult.error || undefined,
+      sample: lastResult.records.slice(0, 2),
     });
 
   } catch (error: any) {
     console.error('[collect-lemeng] Fatal error:', error);
     const finishedAt = new Date();
-    errorMessage = error.message;
 
     try {
       const client = createClient({ baseUrl: INSFORGE_API_BASE, anonKey: INSFORGE_API_KEY });
       const body = await req.json();
-      await writeLog(client, body.task_id, startedAt, finishedAt, 'failed', allRecords.length, errorMessage);
+      await writeLog(client, body.task_id, startedAt, finishedAt, 'failed', 0, error.message);
     } catch { /* ignore */ }
 
-    return NextResponse.json({ success: false, error: errorMessage, rows_collected: allRecords.length }, { status: 500 });
+    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
 }
