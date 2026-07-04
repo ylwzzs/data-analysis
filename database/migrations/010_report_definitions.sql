@@ -92,7 +92,11 @@ $JSON$::jsonb,
     'order_detail_bizday',
     'YYYYMMDD',
     '["biz_date", "branch_num"]'::jsonb
-);
+) ON CONFLICT (report_type) DO UPDATE SET
+    name = EXCLUDED.name,
+    target_table = EXCLUDED.target_table,
+    sql_template = EXCLUDED.sql_template,
+    field_mapping = EXCLUDED.field_mapping;
 
 -- 2. 每日品类汇总
 INSERT INTO report_definitions (
@@ -130,7 +134,11 @@ $JSON$::jsonb,
     'order_detail_bizday',
     'YYYYMMDD',
     '["biz_date", "branch_num", "category"]'::jsonb
-);
+) ON CONFLICT (report_type) DO UPDATE SET
+    name = EXCLUDED.name,
+    target_table = EXCLUDED.target_table,
+    sql_template = EXCLUDED.sql_template,
+    field_mapping = EXCLUDED.field_mapping;
 
 -- 3. 周趋势汇总
 INSERT INTO report_definitions (
@@ -163,4 +171,8 @@ $JSON$::jsonb,
     'order_detail_bizday',
     'YYYYMMDD',
     '["week_start", "branch_num"]'::jsonb
-);
+) ON CONFLICT (report_type) DO UPDATE SET
+    name = EXCLUDED.name,
+    target_table = EXCLUDED.target_table,
+    sql_template = EXCLUDED.sql_template,
+    field_mapping = EXCLUDED.field_mapping;
