@@ -101,8 +101,24 @@ app.post("/query", async (req, res) => {
 
     console.log("[query] user:", user_id, "sql:", sql.substring(0, 100));
     const result = await runQuery(sql);
-    res.json({ success: true, data: result, rowCount: result.length });
+
+    // DuckDB 的 COUNT/SUM 等聚合可能返回 BigInt，JSON.stringify 默认无法序列化 BigInt
+    // 这里统一转成 number（超过 Number.MAX_SAFE_INTEGER 的极少数场景用字符串兜底）
+    const safeResult = result.map(row => {
+      const safe = {};
+      for (const [k, v] of Object.entries(row)) {
+        if (typeof v === 'bigint') {
+          safe[k] = v > Number.MAX_SAFE_INTEGER ? v.toString() : Number(v);
+        } else {
+          safe[k] = v;
+        }
+      }
+      return safe;
+    });
+
+    res.json({ success: true, data: safeResult, rowCount: result.length });
   } catch (err) {
+    console.error("[query] Error:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
