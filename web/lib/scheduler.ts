@@ -239,8 +239,10 @@ async function executeTask(task: {
       finalStatus,
       lastResult.records.length,
       lastResult.error || undefined,
-      lastResult.storagePath || undefined,
-      { api_total: lastResult.apiTotal, missing: lastResult.apiTotal - lastResult.records.length, verified }
+      {
+        storage_path: lastResult.storagePath,
+        verification: { api_total: lastResult.apiTotal, missing: lastResult.apiTotal - lastResult.records.length, verified }
+      }
     );
 
     console.log(`[scheduler] 任务 ${task.name}: ${finalStatus} (${lastResult.records.length} 条) ${verified ? '✅' : '❌'}`);
@@ -263,8 +265,7 @@ async function writeLog(
   status: string,
   rowsCollected: number,
   errorMessage?: string,
-  storagePath?: string,
-  verification?: { api_total: number; missing: number; verified: boolean }
+  responseSummary?: any
 ) {
   await client.database
     .from('collect_logs')
@@ -276,10 +277,7 @@ async function writeLog(
       duration_ms: finishedAt.getTime() - startedAt.getTime(),
       rows_collected: rowsCollected,
       error_message: errorMessage || null,
-      response_summary: storagePath ? {
-        storage_path: storagePath,
-        verification: verification || null,
-      } : null,
+      response_summary: responseSummary || null,
     }]);
 }
 
