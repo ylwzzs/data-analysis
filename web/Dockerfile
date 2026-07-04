@@ -17,7 +17,7 @@ FROM ${NODE_IMAGE} AS deps
 ARG NPM_REGISTRY=https://registry.npmmirror.com
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --registry=$NPM_REGISTRY
+RUN npm install --registry=$NPM_REGISTRY
 
 # ---------- 2. builder：构建产物 ----------
 FROM ${NODE_IMAGE} AS builder
