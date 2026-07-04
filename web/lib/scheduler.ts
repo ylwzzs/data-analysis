@@ -5,6 +5,7 @@
 import cron, { ScheduledTask } from 'node-cron';
 import { createClient } from '@insforge/sdk';
 import { collectOnce, getYesterdayChina, ALL_BRANCH_NUMS, CollectResult } from './collect';
+import { collectItems, CollectItemsResult } from './collect-items';
 import { notifyWecom } from './notify';
 
 const INSFORGE_API_BASE = process.env.INSFORGE_API_BASE!;
@@ -98,6 +99,9 @@ function registerTask(task: {
 
 /**
  * 执行单个采集任务（含对账重试）
+ * 根据 params.task_type 判断采集类型：
+ *   - 'items' → 商品档案采集
+ *   - 其他/无 → 订单明细采集
  */
 async function executeTask(task: {
   id: string;
@@ -131,8 +135,40 @@ async function executeTask(task: {
       return;
     }
 
-    // 2. 获取参数
+    // 2. 根据任务类型选择采集逻辑
     const params = task.params || {};
+
+    if (params.task_type === 'items') {
+      // ===== 商品档案采集 =====
+      console.log(`[scheduler] 商品档案采集: ${task.name}`);
+      const branchId = params.branch_id || 28444;
+      const pageSize = params.page_size || 200;
+
+      const result = await collectItems(authToken, branchId, pageSize);
+
+      const finishedAt = new Date();
+      await client.database
+        .from('collect_tasks')
+        .update({ last_run_at: finishedAt.toISOString() })
+        .eq('id', task.id);
+
+      const finalStatus = result.error ? 'failed' : 'success';
+      await writeLog(
+        client,
+        task.id,
+        startedAt,
+        finishedAt,
+        finalStatus,
+        result.collected,
+        result.error || undefined,
+        { total: result.total }
+      );
+
+      console.log(`[scheduler] 商品档案采集完成: ${result.collected}/${result.total} 条 ${result.error ? '❌' : '✅'}`);
+      return;
+    }
+
+    // ===== 订单明细采集（默认） =====
     const dates = params.dates || [getYesterdayChina(), getYesterdayChina()];
     const branchNums = params.branch_nums || ALL_BRANCH_NUMS;
     const branchNumsStr = branchNums.join(',');
