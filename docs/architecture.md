@@ -546,7 +546,137 @@ docker exec deploy-postgres-1 psql -U postgres -d insforge -c "<SQL>"
 
 ---
 
-## 十、待实现/待讨论
+## 十、配置驱动的报表系统
+
+### 10.1 设计理念
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         新增报表对比                                      │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  旧方式（硬编码）                                                        │
+│  新增报表 → 修改 server.js → docker build → push → 部署  ❌             │
+│  耗时：10-20 分钟                                                        │
+│                                                                         │
+│  新方式（配置驱动）                                                      │
+│  新增报表 → INSERT report_definitions → 立即生效         ✅             │
+│  耗时：1 分钟                                                            │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### 10.2 report_definitions 表结构
+
+```sql
+CREATE TABLE report_definitions (
+    id SERIAL PRIMARY KEY,
+    report_type VARCHAR(50) UNIQUE NOT NULL,    -- API 参数标识
+    name VARCHAR(100) NOT NULL,                  -- 中文名称
+    target_table VARCHAR(100) NOT NULL,          -- PostgreSQL 目标表
+    source_pattern VARCHAR(200) NOT NULL,        -- S3 数据源路径
+    sql_template TEXT NOT NULL,                  -- 聚合 SQL（支持占位符）
+    field_mapping JSONB NOT NULL,                -- 字段映射 + 类型转换
+    date_column VARCHAR(100),                    -- 数据源日期列
+    date_format VARCHAR(20) DEFAULT 'YYYYMMDD',  -- 日期格式
+    conflict_keys JSONB DEFAULT '[]',            -- UPSERT 冲突键
+    enabled BOOLEAN DEFAULT true,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+```
+
+### 10.3 占位符系统
+
+| 占位符 | 替换内容 | 示例 |
+|--------|---------|------|
+| `{{source_pattern}}` | 数据源路径 | `s3://lemeng-datasource/lemeng/retail_detail/**/*.parquet` |
+| `{{date_column}}` | 日期列名 | `order_detail_bizday` |
+| `{{date_from}}` | 开始日期（YYYY-MM-DD） | `2026-07-02` |
+| `{{date_to}}` | 结束日期（YYYY-MM-DD） | `2026-07-02` |
+| `{{date_from_compact}}` | 紧凑开始日期 | `20260702` |
+| `{{date_to_compact}}` | 紧凑结束日期 | `20260702` |
+
+### 10.4 字段映射格式
+
+```json
+{
+  "parquet_column": {
+    "pg_column": "pg_column_name",           -- PostgreSQL 列名
+    "type": "VARCHAR|INTEGER|DECIMAL(12,2)", -- 类型（可选）
+    "transform": "YYYYMMDD_to_YYYY-MM-DD"    -- 转换函数（可选）
+  }
+}
+```
+
+### 10.5 已配置报表
+
+| report_type | 名称 | 目标表 | 状态 |
+|-------------|------|--------|------|
+| daily_sales | 每日门店销售汇总 | report_daily_sales | ✅ |
+| daily_category | 每日门店品类汇总 | report_daily_category | ✅ |
+| weekly_trend | 周销售趋势汇总 | report_weekly_trend | ✅ |
+
+### 10.6 新增报表示例
+
+**前提：先创建目标表**
+
+```sql
+CREATE TABLE report_daily_supplier (
+    biz_date DATE NOT NULL,
+    supplier_name VARCHAR(100) NOT NULL,
+    total_sale DECIMAL(12,2) DEFAULT 0,
+    created_at TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (biz_date, supplier_name)
+);
+```
+
+**插入报表配置**
+
+```sql
+INSERT INTO report_definitions (
+    report_type, name, target_table, source_pattern,
+    sql_template, field_mapping, date_column, conflict_keys
+) VALUES (
+    'daily_supplier',
+    '每日供应商汇总',
+    'report_daily_supplier',
+    's3://lemeng-datasource/lemeng/retail_detail/**/*.parquet',
+    -- SQL 模板（$SQL$ 避免转义）
+    $SQL$
+    SELECT
+        order_detail_bizday as biz_date_raw,
+        supplier_name,
+        CAST(SUM(CAST(sale_money AS DECIMAL(12,2))) AS DECIMAL(12,2)) as total_sale
+    FROM read_parquet('{{source_pattern}}')
+    WHERE order_detail_bizday BETWEEN '{{date_from_compact}}' AND '{{date_to_compact}}'
+      AND supplier_name IS NOT NULL
+    GROUP BY order_detail_bizday, supplier_name
+    $SQL$,
+    -- 字段映射
+    '{"biz_date_raw":{"pg_column":"biz_date","transform":"YYYYMMDD_to_YYYY-MM-DD"},
+      "supplier_name":{"pg_column":"supplier_name"},
+      "total_sale":{"pg_column":"total_sale","type":"DECIMAL(12,2)"}}'::jsonb,
+    'order_detail_bizday',
+    '["biz_date","supplier_name"]'::jsonb
+);
+```
+
+**立即可用**
+
+```bash
+POST /compute {"report_type":"daily_supplier","date_from":"2026-07-02","date_to":"2026-07-02"}
+```
+
+### 10.7 端点说明
+
+| 端点 | 方法 | 功能 |
+|------|------|------|
+| `/reports` | GET | 查询可用报表列表 |
+| `/compute` | POST | 执行报表计算（从配置读取） |
+
+---
+
+## 十一、待实现/待讨论
 
 | 项目 | 状态 | 备注 |
 |------|------|------|
@@ -560,7 +690,7 @@ docker exec deploy-postgres-1 psql -U postgres -d insforge -c "<SQL>"
 
 ---
 
-## 十一、架构变更流程
+## 十二、架构变更流程
 
 1. 发现需要变更的需求
 2. 提出变更方案 + 方案对比 + 推荐理由
