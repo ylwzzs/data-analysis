@@ -10,6 +10,8 @@
  *
  * 注意：乐檬 SPA 可能在 localStorage 里存多个 token（旧的+新的）。
  * 本脚本遍历所有候选、解码 exp、取【最新（exp 最大）】的那个，避免抓到已失效的旧值。
+ * 弹框会显眼地打印【品牌 ID（company_id）】，便于对比切换品牌后 token 是否变化。
+ * 书签每次都从本站点动态加载此 JS，更新文件并部署后，已有书签自动用到新代码。
  */
 
 (function() {
@@ -68,14 +70,19 @@
   const expDate = new Date(best.exp * 1000);
   const daysLeft = Math.ceil((best.exp - nowSec) / 86400);
   const list = candidates.map(function(c) {
-    return '  · ' + c.key + ' (exp ' + new Date(c.exp * 1000).toLocaleString() + ')';
+    return '  · 品牌' + (c.payload.company_id || '?') + '  ' + c.key + '  (exp ' + new Date(c.exp * 1000).toLocaleString() + ')';
   }).join('\n');
 
-  const msg = '✅ 最新乐檬 Token 已复制（共找到 ' + candidates.length + ' 个，已选 exp 最大的）\n\n' +
-    '来源：' + best.key + '\n' +
+  const msg =
+    '🏷️ 品牌 ID（company_id）：' + (best.payload.company_id || '?') + '\n' +
+    '━━━━━━━━━━━━━━━━━━━━━━\n' +
+    '✅ 最新乐檬 Token 已复制（共 ' + candidates.length + ' 个，已选 exp 最大的）\n\n' +
+    '品牌：' + (best.payload.company_id || '?') + '\n' +
+    '登录门店：' + (best.payload.branch_id || '-') + '\n' +
     '用户：' + (best.payload.user_name || best.payload.phone || '-') + '\n' +
     '有效期：' + (daysLeft > 0 ? daysLeft + ' 天' : '已过期！') + '（' + expDate.toLocaleString() + '）\n\n' +
-    '其他候选：\n' + list + '\n\n请回到数据分析平台粘贴使用。';
+    '全部候选（含各自品牌，按 exp 降序）：\n' + list + '\n\n' +
+    '👉 切换品牌后再次运行本书签，对比上方【品牌 ID】是否变化。\n\n请回到数据分析平台粘贴使用。';
 
   navigator.clipboard.writeText(best.token).then(function() {
     alert(msg);
