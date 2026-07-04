@@ -5,8 +5,9 @@
 #   2) 服务器(国内) git pull GitHub 偶发 TLS 中断 —— 改用 GHA rsync 推代码（同 tuangou 项目）
 #
 # 链路：push main / workflow_dispatch
+#   → quality job: lint(警告模式) + type-check(必须通过) + function-check(必须通过)
 #   → checkout → rsync 代码到服务器（排除 .git/node_modules/.next/.env）
-#   → SSH 执行 scripts/deploy.sh：起后端 → migrate → function
+#   → SSH 执行 deploy.sh：起后端 → migrate → function
 #     → docker login 天翼云 → docker build 前端（服务器）→ docker push 天翼云 → compose up
 #
 # Secrets：
@@ -25,7 +26,34 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # 质量门禁：lint(警告) + type-check + function 校验
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: cd web && npm ci
+
+      - name: Lint (warnings allowed)
+        run: cd web && npm run lint || echo "::warning::Lint has issues - check logs"
+        continue-on-error: true
+
+      - name: Type check
+        run: cd web && npx tsc --noEmit
+
+      - name: Check edge functions
+        run: bash scripts/check-functions.sh
+
   deploy:
+    needs: quality
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

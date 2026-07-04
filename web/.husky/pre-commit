@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# pre-commit hook: 在提交前运行 lint 和 function 检查
+set -e
+
+echo "🔍 Running lint-staged..."
+cd web && npx lint-staged
+
+echo "🔍 Checking edge functions..."
+cd .. && bash scripts/check-functions.sh
+
+echo "✅ Pre-commit checks passed"

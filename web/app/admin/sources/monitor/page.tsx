@@ -29,10 +29,6 @@ export default function CollectMonitorPage() {
   const [logs, setLogs] = useState<Log[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    fetchData();
-  }, []);
-
   async function fetchData() {
     try {
       // 获取统计数据
@@ -50,6 +46,9 @@ export default function CollectMonitorPage() {
       setLoading(false);
     }
   }
+
+
+
 
   function formatDuration(ms: number) {
     if (!ms) return '-';

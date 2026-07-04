@@ -91,9 +91,9 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: nu
     const response = await fetch(url, { ...options, signal: controller.signal });
     clearTimeout(timeout);
     return response;
-  } catch (err: Error & { name?: string }) {
+  } catch (err: unknown) {
     clearTimeout(timeout);
-    if (err.name === 'AbortError') {
+    if ((err instanceof Error ? err.name : "Unknown") === 'AbortError') {
       throw new Error(`Request timeout after ${timeoutMs}ms`);
     }
     throw err;
@@ -125,13 +125,13 @@ async function callLemengApi(urlPath: string, authToken: string, bodyStr: string
 
       const errorText = await response.text();
       return { ok: false, status: response.status, error: `HTTP ${response.status}: ${errorText.slice(0, 200)}` };
-    } catch (err: Error & { name?: string }) {
+    } catch (err: unknown) {
       if (attempt < maxRetries - 1) {
-        console.log(`[collect-items] Attempt ${attempt + 1} error: ${err.message}, retrying after 2s...`);
+        console.log(`[collect-items] Attempt ${attempt + 1} error: ${(err instanceof Error ? err.message : String(err))}, retrying after 2s...`);
         await new Promise(r => setTimeout(r, 2000));
         continue;
       }
-      return { ok: false, error: err.message };
+      return { ok: false, error: (err instanceof Error ? err.message : String(err)) };
     }
   }
   return { ok: false, error: "Max retries exceeded" };
@@ -166,9 +166,9 @@ async function upsertToPostgREST(records: LemengItem[]): Promise<{ success: bool
     const errorText = await response.text();
     console.error(`[collect-items] Error response (${response.status}): ${errorText.slice(0, 500)}`);
     return { success: false, error: `PostgREST ${response.status}: ${errorText.slice(0, 200)}` };
-  } catch (err: Error & { name?: string }) {
-    console.error(`[collect-items] Fetch error:`, err.message);
-    return { success: false, error: err.message };
+  } catch (err: unknown) {
+    console.error(`[collect-items] Fetch error:`, (err instanceof Error ? err.message : String(err)));
+    return { success: false, error: (err instanceof Error ? err.message : String(err)) };
   }
 }
 
