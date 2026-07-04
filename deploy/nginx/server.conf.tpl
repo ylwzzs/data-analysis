@@ -72,4 +72,25 @@ server {
         proxy_read_timeout 300s;
         proxy_connect_timeout 75s;
     }
+
+    # ---------- openclaw Webhook（企微回调）----------
+    # 注意：openclaw gateway 端口为 18789，企微 channel 需要在 openclaw.json 中配置
+    location /webhook/wecom {
+        proxy_pass http://deploy-openclaw-1:18789;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 120s;
+        proxy_connect_timeout 60s;
+    }
+
+    # ---------- openclaw Control UI（仅内部访问）----------
+    location /openclaw/ {
+        proxy_pass http://deploy-openclaw-1:18789/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
 }

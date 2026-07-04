@@ -19,9 +19,10 @@ API_URL="${INSFORGE_URL:-http://localhost:7130}"
 
 echo "==== [1/5] 同步代码 ===="
 cd "$ROOT"
-# 代码已由 GHA rsync 同步；git pull 仅作手动部署兜底，失败不阻断
-# （服务器访问 GitHub 偶发 GnuTLS/TLS 中断，GHA 触发时走 rsync 不依赖此处）
-git pull --ff-only 2>/dev/null || echo "  · 跳过 git pull（代码由 GHA rsync 提供）"
+# 代码已由 GHA rsync 同步；git pull 仅作手动部署兜底，失败不阻断。
+# 必须用 timeout 包裹：服务器访问 GitHub 偶发 GnuTLS/TLS 中断，git pull 会【挂死】
+# （不报错也不退出），导致整个 deploy.sh 卡住。20s 超时后按失败处理走 rsync 的代码。
+timeout 20 git pull --ff-only 2>/dev/null || echo "  · 跳过 git pull（代码由 GHA rsync 提供，或 git 超时）"
 cd "$DEPLOY_DIR"
 
 echo "==== [2/5] 起后端栈并等待就绪 ===="
