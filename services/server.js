@@ -1,6 +1,7 @@
 const express = require("express");
 const duckdb = require("duckdb");
 const AWS = require("aws-sdk");
+const { Pool } = require("pg");  // PostgreSQL 连接池
 
 const app = express();
 app.use(express.json({ limit: '100mb' }));
@@ -12,6 +13,16 @@ const S3_ENDPOINT = process.env.S3_ENDPOINT || "http://xinan-1-internal.zos.ctyu
 const S3_ACCESS_KEY = process.env.S3_ACCESS_KEY || "";
 const S3_SECRET_KEY = process.env.S3_SECRET_KEY || "";
 const S3_BUCKET = process.env.S3_BUCKET || "lemeng-datasource";
+
+// PostgreSQL 配置（写入汇总结果）
+const PG_HOST = process.env.PG_HOST || "postgres";
+const PG_PORT = process.env.PG_PORT || 5432;
+const PG_DATABASE = process.env.PG_DATABASE || "insforge";
+const PG_USER = process.env.PG_USER || "postgres";
+const PG_PASSWORD = process.env.PG_PASSWORD || "";
+
+// PostgreSQL 连接池
+let pgPool = null;
 
 // DuckDB 连接
 let db = null;
@@ -28,6 +39,23 @@ async function initDuckDB() {
   await runQuery("SET s3_secret_access_key='" + S3_SECRET_KEY + "'");
   await runQuery("SET s3_use_ssl=false");
   await runQuery("SET s3_region='xinan-1'");
+
+  // 初始化 PostgreSQL 连接池
+  if (PG_HOST && PG_USER) {
+    pgPool = new Pool({
+      host: PG_HOST,
+      port: PG_PORT,
+      database: PG_DATABASE,
+      user: PG_USER,
+      password: PG_PASSWORD,
+      max: 5,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 2000,
+    });
+    console.log("PostgreSQL pool initialized:", PG_HOST);
+  } else {
+    console.warn("PostgreSQL not configured, /compute will fail");
+  }
 
   console.log("DuckDB initialized with S3:", S3_ENDPOINT);
 }
@@ -255,6 +283,216 @@ app.get("/schema", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// ===== 计算端点：标准报表 =====
+// 架构文档：DuckDB 角色 2 - 计算引擎
+// 输入：报表类型 + 日期范围
+// 处理：read_parquet(OOS) → 聚合计算
+// 输出：写入 PostgreSQL 汇总表
+app.post("/compute", async (req, res) => {
+  const startTime = Date.now();
+  try {
+    const { report_type, date_from, date_to, params } = req.body;
+
+    if (!report_type || !date_from || !date_to) {
+      return res.status(400).json({ error: "Missing report_type, date_from, or date_to" });
+    }
+
+    if (!pgPool) {
+      return res.status(500).json({ error: "PostgreSQL not configured" });
+    }
+
+    console.log(`[compute] ${report_type}: ${date_from} to ${date_to}`);
+
+    let result;
+
+    switch (report_type) {
+      case "daily_sales":
+        result = await computeDailySales(date_from, date_to);
+        break;
+      case "daily_category":
+        result = await computeDailyCategory(date_from, date_to);
+        break;
+      case "weekly_trend":
+        result = await computeWeeklyTrend(date_from, date_to);
+        break;
+      default:
+        return res.status(400).json({ error: `Unknown report_type: ${report_type}` });
+    }
+
+    const duration = Date.now() - startTime;
+    console.log(`[compute] ${report_type} done: ${result.rows_written} rows in ${duration}ms`);
+
+    res.json({
+      success: true,
+      report_type,
+      date_from,
+      date_to,
+      rows_written: result.rows_written,
+      duration_ms: duration
+    });
+
+  } catch (err) {
+    console.error("[compute] Error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 计算每日门店销售汇总
+async function computeDailySales(dateFrom, dateTo) {
+  // 从 OOS 读取 Parquet 并聚合
+  const sql = `
+    SELECT
+      biz_date,
+      branch_num,
+      MAX(branch_name) as branch_name,
+      CAST(COUNT(DISTINCT order_no) AS INTEGER) as total_orders,
+      CAST(COUNT(*) AS INTEGER) as total_items,
+      CAST(SUM(CAST(sale AS DECIMAL(12,2))) AS DECIMAL(12,2)) as total_sale,
+      CAST(SUM(CAST(profit AS DECIMAL(12,2))) AS DECIMAL(12,2)) as total_profit
+    FROM read_parquet('s3://${S3_BUCKET}/lemeng/retail_detail/{${dateFrom},${dateTo}}/*.parquet')
+    WHERE biz_date BETWEEN '${dateFrom}' AND '${dateTo}'
+    GROUP BY biz_date, branch_num
+    ORDER BY biz_date, branch_num
+  `;
+
+  const rows = await runQuery(sql);
+  console.log(`[compute] daily_sales: ${rows.length} aggregated rows`);
+
+  // 写入 PostgreSQL（upsert）
+  let rowsWritten = 0;
+  for (const row of rows) {
+    const pgSql = `
+      INSERT INTO report_daily_sales (biz_date, branch_num, branch_name, total_orders, total_items, total_sale, total_profit)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      ON CONFLICT (biz_date, branch_num) DO UPDATE SET
+        branch_name = EXCLUDED.branch_name,
+        total_orders = EXCLUDED.total_orders,
+        total_items = EXCLUDED.total_items,
+        total_sale = EXCLUDED.total_sale,
+        total_profit = EXCLUDED.total_profit,
+        updated_at = NOW()
+    `;
+    await pgPool.query(pgSql, [
+      row.biz_date,
+      row.branch_num,
+      row.branch_name,
+      row.total_orders,
+      row.total_items,
+      row.total_sale,
+      row.total_profit
+    ]);
+    rowsWritten++;
+  }
+
+  return { rows_written: rowsWritten };
+}
+
+// 计算每日品类汇总
+async function computeDailyCategory(dateFrom, dateTo) {
+  const sql = `
+    SELECT
+      biz_date,
+      branch_num,
+      category,
+      CAST(COUNT(*) AS INTEGER) as total_items,
+      CAST(SUM(CAST(sale AS DECIMAL(12,2))) AS DECIMAL(12,2)) as total_sale,
+      CAST(SUM(CAST(profit AS DECIMAL(12,2))) AS DECIMAL(12,2)) as total_profit
+    FROM read_parquet('s3://${S3_BUCKET}/lemeng/retail_detail/{${dateFrom},${dateTo}}/*.parquet')
+    WHERE biz_date BETWEEN '${dateFrom}' AND '${dateTo}'
+      AND category IS NOT NULL AND category != ''
+    GROUP BY biz_date, branch_num, category
+    ORDER BY biz_date, branch_num, category
+  `;
+
+  const rows = await runQuery(sql);
+  console.log(`[compute] daily_category: ${rows.length} aggregated rows`);
+
+  let rowsWritten = 0;
+  for (const row of rows) {
+    const pgSql = `
+      INSERT INTO report_daily_category (biz_date, branch_num, category, total_items, total_sale, total_profit)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      ON CONFLICT (biz_date, branch_num, category) DO UPDATE SET
+        total_items = EXCLUDED.total_items,
+        total_sale = EXCLUDED.total_sale,
+        total_profit = EXCLUDED.total_profit,
+        updated_at = NOW()
+    `;
+    await pgPool.query(pgSql, [
+      row.biz_date,
+      row.branch_num,
+      row.category,
+      row.total_items,
+      row.total_sale,
+      row.total_profit
+    ]);
+    rowsWritten++;
+  }
+
+  return { rows_written: rowsWritten };
+}
+
+// 计算周趋势汇总
+async function computeWeeklyTrend(dateFrom, dateTo) {
+  // 计算周起始日期（周一）
+  const sql = `
+    SELECT
+      DATE_TRUNC('week', biz_date) as week_start,
+      branch_num,
+      MAX(branch_name) as branch_name,
+      CAST(SUM(CAST(sale AS DECIMAL(12,2))) AS DECIMAL(12,2)) as total_sale
+    FROM read_parquet('s3://${S3_BUCKET}/lemeng/retail_detail/{${dateFrom},${dateTo}}/*.parquet')
+    WHERE biz_date BETWEEN '${dateFrom}' AND '${dateTo}'
+    GROUP BY DATE_TRUNC('week', biz_date), branch_num
+    ORDER BY week_start, branch_num
+  `;
+
+  const rows = await runQuery(sql);
+  console.log(`[compute] weekly_trend: ${rows.length} aggregated rows`);
+
+  // 计算环比增长（需要查询上一周数据）
+  let rowsWritten = 0;
+  for (const row of rows) {
+    const prevWeekStart = new Date(row.week_start);
+    prevWeekStart.setDate(prevWeekStart.getDate() - 7);
+    const prevWeekStr = prevWeekStart.toISOString().split('T')[0];
+
+    // 查询上一周销售额
+    const prevResult = await pgPool.query(
+      `SELECT total_sale FROM report_weekly_trend WHERE week_start = $1 AND branch_num = $2`,
+      [prevWeekStr, row.branch_num]
+    );
+    const prevSale = prevResult.rows[0]?.total_sale || 0;
+
+    // 计算增长率
+    const growthRate = prevSale > 0
+      ? Math.round(((row.total_sale - prevSale) / prevSale) * 100)
+      : 0;
+
+    const pgSql = `
+      INSERT INTO report_weekly_trend (week_start, branch_num, branch_name, total_sale, prev_week_sale, growth_rate)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      ON CONFLICT (week_start, branch_num) DO UPDATE SET
+        branch_name = EXCLUDED.branch_name,
+        total_sale = EXCLUDED.total_sale,
+        prev_week_sale = EXCLUDED.prev_week_sale,
+        growth_rate = EXCLUDED.growth_rate,
+        updated_at = NOW()
+    `;
+    await pgPool.query(pgSql, [
+      row.week_start,
+      row.branch_num,
+      row.branch_name,
+      row.total_sale,
+      prevSale,
+      growthRate
+    ]);
+    rowsWritten++;
+  }
+
+  return { rows_written: rowsWritten };
+}
 
 // 启动
 initDuckDB().then(() => {

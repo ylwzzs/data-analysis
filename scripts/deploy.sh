@@ -60,6 +60,7 @@ echo "  · 前端将连接 $NEXT_PUBLIC_INSFORGE_URL"
 
 echo "==== [5/5] 服务器构建前端镜像 → 推天翼云 → 起网关 ===="
 WEB_IMAGE="registry-crs-xinan1.ctyun.cn/hookflow/data-analysis-web:latest"
+DUCKDB_IMAGE="registry-crs-xinan1.ctyun.cn/hookflow/duckdb-service:latest"
 
 # 登录天翼云（服务器国内 → 天翼云国内，push 快；凭证由 GHA secrets 经 SSH 注入）
 if [ -n "${CTYUN_USERNAME:-}" ] && [ -n "${CTYUN_PASSWORD:-}" ]; then
@@ -68,6 +69,11 @@ if [ -n "${CTYUN_USERNAME:-}" ] && [ -n "${CTYUN_PASSWORD:-}" ]; then
 else
   echo "  ⚠ CTYUN_USERNAME/CTYUN_PASSWORD 未注入，跳过 push（仅本地 build）" >&2
 fi
+
+# 构建 DuckDB 服务镜像（用于 /compute 端点）
+echo "  · docker build $DUCKDB_IMAGE"
+docker build -t "$DUCKDB_IMAGE" "$ROOT/services"
+docker push "$DUCKDB_IMAGE" || echo "  ⚠ push DuckDB 镜像失败，使用本地镜像继续"
 
 # 服务器本地 build（base 镜像走 xuanyuan.run、npm 走 npmmirror，均国内链路）
 echo "  · docker build $WEB_IMAGE"
@@ -93,8 +99,8 @@ else
   echo "  ⚠ DOMAIN 未设置，nginx server.conf 未生成 —— Let's Encrypt 签发会失败" >&2
 fi
 
-# 起 web（用本地刚 build 的镜像，--force-recreate 确保用新镜像）+ nginx（首次自动 pull xuanyuan.run 公共镜像）
-$COMPOSE up -d --force-recreate web nginx
+# 起 web（用本地刚 build 的镜像，--force-recreate 确保用新镜像）+ nginx（首次自动 pull xuanyuan.run 公共镜像）+ duckdb
+$COMPOSE up -d --force-recreate web nginx duckdb
 
 echo ""
 echo "==== ✅ 部署完成 ===="

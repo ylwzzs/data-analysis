@@ -45,7 +45,7 @@ jobs:
             --exclude '.next' \
             --exclude '.env' \
             -e "ssh -i ~/.ssh/deploy_key" \
-            ./web ./scripts ./database ./deploy ./functions \
+            ./web ./scripts ./database ./deploy ./functions ./services \
             ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.DEPLOY_PATH }}/
 
       - name: SSH 执行部署

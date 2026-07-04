@@ -197,7 +197,8 @@ POST /collect_logs            → 写入采集日志
 │  ├── 输入：报表类型 + 日期范围                                    │
 │  ├── 处理：read_parquet(OOS) → 聚合计算                          │
 │  ├── 输出：结果写入 PostgreSQL                                   │
-│  └── 状态：⏳ 待实现                                             │
+│  ├── 报表类型：daily_sales / daily_category / weekly_trend      │
+│  └── 状态：✅ 已实现                                             │
 │                                                                 │
 │  角色 3：个性化查询                                               │
 │  端点：POST /query                                               │
@@ -547,8 +548,8 @@ docker exec deploy-postgres-1 psql -U postgres -d insforge -c "<SQL>"
 
 | 项目 | 状态 | 备注 |
 |------|------|------|
-| DuckDB /compute 端点 | ⏳ 待实现 | 标准报表计算 |
-| PostgreSQL 汇总表 | ⏳ 待创建 | report_daily_sales 等 |
+| DuckDB /compute 端点 | ✅ 已实现 | 标准报表计算 |
+| PostgreSQL 汇总表 | ✅ 已创建 | report_daily_sales 等 |
 | 采集后自动触发计算 | ⏳ 待实现 | transform → compute |
 | DuckDB /query 鉴权 | ⏳ 待讨论 | OpenClaw 个性化查询 |
 | OpenClaw 集成 | ⏳ 待实现 | SQL 生成 + /query 调用 |
