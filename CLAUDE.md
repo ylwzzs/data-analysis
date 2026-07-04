@@ -123,3 +123,156 @@ ssh -i "/Users/Duo/WPS 云文档/其他/ShanHai-OPS.pem" root@data.shanhaiyiguo.
 
 ### 重新登录获取姓名
 - 清除浏览器 cookie 或访问 `/login` 触发重新授权
+
+## 开发流程问题总结（2026-07-04）
+
+### 核心问题
+
+**每次新增功能都要反复调试，验证周期长，效率低。**
+
+根因是 **验证周期太长** + **幂等设计缺失** + **环境配置碎片化**。
+
+---
+
+### 问题链分析
+
+#### 案例：商品档案采集功能开发
+
+**第一次失败**：迁移文件不幂等
+- 触发器重复创建 → `ERROR: trigger already exists`
+- INSERT 无 ON CONFLICT → `ERROR: duplicate key value`
+- 修复：加 `DROP TRIGGER IF EXISTS` + `ON CONFLICT DO UPDATE`
+
+**第二次失败**：VARCHAR 长度不够
+- 商品名称/编号超长 → `ERROR: value too long for type character varying(100)`
+- 修复：`ALTER COLUMN ... TYPE VARCHAR(200/500)`
+
+**第三次失败**：GHA 部署失败
+- `INSFORGE_API_KEY` 无效 → function 部署 401
+- GHA Step 4 失败，跳过 Step 5（前端构建）
+- 新增的 `/api/admin/collect-items` 路由未部署
+
+**第四次失败**：环境变量读取错误
+- `NEXT_PUBLIC_INSFORGE_ANON_KEY` 在容器中不存在
+- 代码 fallback 到 `''`，PostgREST 返回 401
+
+---
+
+### 系统性问题清单
+
+#### 1. API Key 管理不透明
+- InsForge 的 API Key 生成/验证机制不明
+- Key 过期或无效时无自动更新
+- `deploy/.env` 中的 Key 可能是部署时生成，后失效
+
+#### 2. GHA 部署脚本脆弱
+- `deploy-functions.sh` 用 `curl -sf`（失败立即退出）
+- 无 retry 或错误容忍机制
+- Step 4 失败导致 Step 5 完全跳过
+
+#### 3. 验证周期太长
+- 本地无法完整测试（需要 InsForge + PostgREST + PostgreSQL 完整栈）
+- push → GHA → 服务器验证，单次验证 30分钟-2小时
+- 失败后诊断困难（SSH 查日志，多层调用链）
+
+#### 4. 幂等设计缺失
+- 迁移文件不幂等（trigger 重复创建、INSERT 无 ON CONFLICT）
+- function 部署逻辑判断 POST/PUT，但 curl 404 检测可能失败
+
+#### 5. 环境变量碎片化
+- `INSFORGE_API_KEY` 在 `deploy/.env`（后端调用）
+- `INSFORGE_API_KEY` 需注入 web 容器（SDK 使用）
+- `NEXT_PUBLIC_INSFORGE_ANON_KEY` 前端专用
+- 新增功能漏配变量就出问题
+
+---
+
+### 改进措施
+
+#### 立即可做
+
+**1. 迁移文件强制幂等模板**（已创建 `database/MIGRATION_TEMPLATE.md`）
+```sql
+-- 标准模板
+DROP TRIGGER IF EXISTS xxx ON table;
+CREATE TRIGGER xxx ...
+
+INSERT INTO table (...) VALUES (...) ON CONFLICT (id) DO UPDATE SET ...;
+```
+
+**2. VARCHAR 字段统一大长度**
+- 编号/编码：VARCHAR(200)
+- 名称：VARCHAR(500)
+- 类别/分类：VARCHAR(200)
+- 状态/类型：VARCHAR(50)
+
+**3. 本地快速测试脚本**
+```bash
+# 不走 GHA，直接在容器内测试
+ssh server "docker exec deploy-web-1 node -e '<测试代码>'"
+```
+
+#### 中期改进
+
+**4. 统一环境变量管理**
+- 所有变量集中在 `deploy/.env`
+- `docker-compose.prod.yml` 只引用 `${VAR}`
+- 新增功能检查清单：后端 env + 前端 env + 容器注入
+
+**5. GHA 部署容错**
+- function 部署失败不阻断前端构建
+- 关键步骤加 retry（3 次，间隔 5s）
+- 失败时输出详细错误（不吞 `curl` 输出）
+
+**6. InsForge API Key 自愈**
+- 检测 Key 无效时自动重新生成
+- 或部署脚本从 Dashboard 获取最新 Key
+
+#### 长期改进
+
+**7. 本地开发环境镜像生产**
+- `docker-compose.dev.yml` 模拟完整栈
+- 本地能测完整流程再 push
+
+**8. 数据库 Schema 类型生成**
+- 从 PostgreSQL 生成 TypeScript 类型
+- 避免 VARCHAR 长度反复修改
+
+---
+
+### 新增功能开发检查清单
+
+**代码开发**
+- [ ] 迁移文件用幂等模板
+- [ ] **外部系统数据字段用 TEXT，不要用 VARCHAR**
+- [ ] 环境变量：后端 + 前端 + 容器注入
+
+**本地验证**
+- [ ] TypeScript 编译通过
+- [ ] 迁移 SQL 语法正确
+- [ ] 新增 API 路由存在
+
+**部署验证**
+- [ ] GHA 成功（5 steps 全绿）
+- [ ] 容器镜像已更新（时间戳检查）
+- [ ] 新功能可访问
+
+**数据验证**
+- [ ] 数据写入正确
+- [ ] 权限正确（anon/authenticated）
+- [ ] RLS 策略（如需要）
+
+---
+
+### 关键教训
+
+| 问题 | 教训 |
+|-----|-----|
+| 迁移文件不幂等 | 所有 DDL 必须先 `DROP IF EXISTS` / `IF NOT EXISTS` |
+| VARCHAR 反复改 | **外部系统数据一律用 TEXT，VARCHAR 只用于自己控制的枚举字段** |
+| 环境变量漏配 | 新增功能必须检查三处：后端 env、前端 env、容器注入 |
+| GHA 失阻断整个部署 | 关键步骤加容错，失败不阻断后续步骤 |
+| 容器跑旧代码 | 部署后必须检查容器创建时间 vs 镜像构建时间 |
+| API Key 无效 | 部署脚本检测 Key 有效性，无效时自动获取新 Key |
+| nginx 配置语法错误 | location 必须在 server block 内，不能独立成文件 |
+| PostgREST schema 缓存 | 修改表结构后必须重启 PostgREST |
