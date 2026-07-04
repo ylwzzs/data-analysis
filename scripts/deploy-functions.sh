@@ -43,12 +43,22 @@ deploy_one() {
 
   if curl -sf -H "$AUTH" "$API_URL/api/functions/$slug" >/dev/null 2>&1; then
     echo "  · 已存在 → PUT 更新"
-    curl -sf -X PUT -H "$AUTH" -H "Content-Type: application/json" \
-      -d "$body" "$API_URL/api/functions/$slug" >/dev/null
+    if ! curl -sf -X PUT -H "$AUTH" -H "Content-Type: application/json" \
+      -d "$body" "$API_URL/api/functions/$slug" >/dev/null; then
+      echo "  ⚠ PUT 失败，尝试查看错误..."
+      curl -s -X PUT -H "$AUTH" -H "Content-Type: application/json" \
+        -d "$body" "$API_URL/api/functions/$slug" 2>&1 | head -c 200
+      return 1
+    fi
   else
     echo "  · 新建 → POST 创建"
-    curl -sf -X POST -H "$AUTH" -H "Content-Type: application/json" \
-      -d "$body" "$API_URL/api/functions" >/dev/null
+    if ! curl -sf -X POST -H "$AUTH" -H "Content-Type: application/json" \
+      -d "$body" "$API_URL/api/functions" >/dev/null; then
+      echo "  ⚠ POST 失败，尝试查看错误..."
+      curl -s -X POST -H "$AUTH" -H "Content-Type: application/json" \
+        -d "$body" "$API_URL/api/functions" 2>&1 | head -c 200
+      return 1
+    fi
   fi
   echo "  ✅ $slug"
 }
