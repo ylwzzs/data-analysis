@@ -53,39 +53,60 @@ ssh -i "/Users/Duo/WPS 云文档/其他/ShanHai-OPS.pem" root@data.shanhaiyiguo.
 
 ## 部署流程
 
-### 代码修改后的部署步骤
+### ⚠️ 部署决策规则（重要）
 
-1. **优先使用 InsForge CLI 更新 edge function**（如果只修改了 function）
+**改代码前先用 `git diff --name-only` 判断改动范围，选择对应部署方式：**
+
+| 改动范围 | 部署方式 | 耗时 | 是否走 GHA |
+|---------|---------|------|-----------|
+| **只改 `functions/*/index.js`** | MCP 直更 + 清 Deno 缓存 | ~15秒 | ❌ 不需要 |
+| 改前端 `web/`、迁移 `database/`、配置 `deploy/` | GHA 完整部署 | 3-4分钟 | ✅ 需要 |
+| function + 前端都改 | MCP 先更 function，再 push 走 GHA | - | ✅ 需要 |
+
+**核心原则：只改 function 时，不要 `git push` 触发 GHA。** GHA 部署 function 有限流（429）、构建慢、容易因无关步骤失败。
+
+### 只改 function 的部署流程（推荐）
+
+1. 用 InsForge MCP 直接更新（绕过 GHA 的 429 限流）
    ```bash
-   # 通过 InsForge API 更新 function
    mcp__insforge__update-function --slug <function-name> --codeFile functions/<function-name>/index.js
-   
-   # 清理 Deno 缓存使更新生效
+   ```
+
+2. 清理 Deno 缓存使更新生效（**关键，否则跑旧代码**）
+   ```bash
    ssh -i "/Users/Duo/WPS 云文档/其他/ShanHai-OPS.pem" root@data.shanhaiyiguo.com "cd /opt/data-analytics-platform/deploy && docker exec deploy-deno-1 rm -rf /deno-dir/* && docker compose restart deno"
    ```
 
-2. **否则推送到 GitHub 触发 CI/CD**
+3. 验证 function 生效
+   ```bash
+   curl -s -X POST https://data.shanhaiyiguo.com/functions/<function-name>
+   ```
+
+### 改前端/迁移/配置的部署流程
+
+1. 推送到 GitHub 触发 CI/CD
    ```bash
    git add . && git commit -m "feat: xxx" && git push origin main
    ```
 
-3. **检查 GitHub Action 部署状态**
+2. 检查 GitHub Action 部署状态
    ```bash
    gh run list --limit 3
-   gh run watch  # 实时监控最新 run
+   gh run watch <run-id>  # 实时监控指定 run
    ```
 
-4. **验证部署成功**
+3. 验证部署成功
    - 检查前端：`https://data.shanhaiyiguo.com`
    - 检查 API：`curl -s https://data.shanhaiyiguo.com/api/health`
    - 检查 function：`curl -s -X POST https://data.shanhaiyiguo.com/functions/<function-name>`
 
 ### GitHub Action CI/CD
 
-项目已配置自动部署：
-- 推送到 `main` 分支自动触发
-- 构建前端并部署到服务器
-- 部署时间约 2-3 分钟
+项目已配置自动部署（推送到 `main` 触发）：
+- Step 1-3：rsync 代码 + 起后端 + 数据库迁移
+- Step 4：部署 edge functions（**容错：失败不阻断前端构建**，可用 MCP 单独补）
+- Step 5：构建前端镜像 + 推天翼云 + 起网关
+- 部署时间约 3-4 分钟
 
 ## 测试流程
 

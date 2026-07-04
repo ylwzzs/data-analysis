@@ -43,7 +43,8 @@ echo "==== [3/5] 数据库迁移 ===="
 bash "$ROOT/scripts/migrate.sh"
 
 echo "==== [4/5] 部署 edge functions + secrets ===="
-bash "$ROOT/scripts/deploy-functions.sh"
+# function 部署为"尽力而为"：失败不阻断前端构建（function 可用 MCP 单独更新）
+bash "$ROOT/scripts/deploy-functions.sh" || echo "⚠ function 部署步骤失败，跳过继续前端构建（function 可用 MCP 单独更新）"
 
 # 前端 build 所需的 anon_key（build-time 内联，必须此时就位）
 if [ -z "${NEXT_PUBLIC_INSFORGE_ANON_KEY:-}" ]; then

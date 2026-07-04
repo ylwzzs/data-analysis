@@ -66,12 +66,20 @@ deploy_one() {
 }
 
 # 部署除 mcp 外的所有 function（mcp 为占位 mock，且 ESM 写法与 OSS CommonJS runtime 冲突）
+# 单个 function 失败不退出整个脚本（function 部署为"尽力而为"，失败不阻断前端构建）
+failed_count=0
 for dir in "$FUNCS_DIR"/*/; do
   [ -d "$dir" ] || continue
   slug="$(basename "$dir")"
   [ "$slug" = "mcp" ] && { echo "⊘ 跳过 mcp（占位，暂不部署）"; continue; }
-  deploy_one "$dir"
+  if ! deploy_one "$dir"; then
+    failed_count=$((failed_count + 1))
+    echo "  ⚠ ${slug} 部署失败，跳过继续"
+  fi
 done
+if [ "$failed_count" -gt 0 ]; then
+  echo "⚠ ${failed_count} 个 function 部署失败（function 可用 MCP 单独更新，不阻断前端部署）"
+fi
 
 # 注入 function secrets（WECOM_*）
 echo "▶ 注入 function secrets（WECOM_*）..."
