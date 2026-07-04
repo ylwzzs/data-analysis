@@ -4,6 +4,30 @@
 
 import crypto from 'crypto';
 
+// ===== 类型定义 =====
+interface LemengItem {
+  item_num: string;
+  item_code: string;
+  item_name: string;
+  item_category?: string;
+  item_spec?: string;
+  item_unit?: string;
+  department?: string;
+  item_regular_price?: number;
+  item_cost_price?: number;
+  item_status?: string;
+  branch_id?: number;
+}
+
+interface LemengApiResponse {
+  code: number;
+  message?: string;
+  result?: {
+    total_elements: number;
+    content: LemengItem[];
+  };
+}
+
 const BASE_URL = "https://sharef.lemengcloud.com";
 const ENDPOINT_ITEM_LIST = "/earth-gateway/amazon-base/nhsoft.base.business.item.page.new";
 
@@ -67,7 +91,7 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: nu
     const response = await fetch(url, { ...options, signal: controller.signal });
     clearTimeout(timeout);
     return response;
-  } catch (err: any) {
+  } catch (err: Error & { name?: string }) {
     clearTimeout(timeout);
     if (err.name === 'AbortError') {
       throw new Error(`Request timeout after ${timeoutMs}ms`);
@@ -76,7 +100,7 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: nu
   }
 }
 
-async function callLemengApi(urlPath: string, authToken: string, bodyStr: string, branchNumsStr: string, maxRetries = 2): Promise<{ ok: boolean; data?: any; status?: number; error?: string }> {
+async function callLemengApi(urlPath: string, authToken: string, bodyStr: string, branchNumsStr: string, maxRetries = 2): Promise<{ ok: boolean; data?: LemengApiResponse; status?: number; error?: string }> {
   const fullUrl = BASE_URL + urlPath;
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
@@ -101,7 +125,7 @@ async function callLemengApi(urlPath: string, authToken: string, bodyStr: string
 
       const errorText = await response.text();
       return { ok: false, status: response.status, error: `HTTP ${response.status}: ${errorText.slice(0, 200)}` };
-    } catch (err: any) {
+    } catch (err: Error & { name?: string }) {
       if (attempt < maxRetries - 1) {
         console.log(`[collect-items] Attempt ${attempt + 1} error: ${err.message}, retrying after 2s...`);
         await new Promise(r => setTimeout(r, 2000));
@@ -114,7 +138,7 @@ async function callLemengApi(urlPath: string, authToken: string, bodyStr: string
 }
 
 // ===== 直接调用 PostgREST 的 upsert =====
-async function upsertToPostgREST(records: any[]): Promise<{ success: boolean; upserted?: number; error?: string }> {
+async function upsertToPostgREST(records: LemengItem[]): Promise<{ success: boolean; upserted?: number; error?: string }> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json; charset=utf-8',
     'Prefer': 'resolution=merge-duplicates'
@@ -142,7 +166,7 @@ async function upsertToPostgREST(records: any[]): Promise<{ success: boolean; up
     const errorText = await response.text();
     console.error(`[collect-items] Error response (${response.status}): ${errorText.slice(0, 500)}`);
     return { success: false, error: `PostgREST ${response.status}: ${errorText.slice(0, 200)}` };
-  } catch (err: any) {
+  } catch (err: Error & { name?: string }) {
     console.error(`[collect-items] Fetch error:`, err.message);
     return { success: false, error: err.message };
   }
@@ -157,13 +181,17 @@ async function getDbCount(): Promise<number> {
   }
 
   try {
+    // 用 Prefer: count=exact + limit=1 触发 Content-Range，再从中解析总数
+    headers['Prefer'] = 'count=exact';
+    headers['Range'] = '0-0';
+
     const response = await fetchWithTimeout(
-      `${POSTGREST_URL}/lemeng_items?select=item_num&limit=0`,
+      `${POSTGREST_URL}/lemeng_items?select=item_num`,
       { method: 'GET', headers },
-      10000
+      15000
     );
 
-    // PostgREST 返回 Content-Range: 0-16709/16710
+    // PostgREST 返回 Content-Range: 0-0/16710
     const contentRange = response.headers.get('content-range');
     if (contentRange) {
       const total = contentRange.split('/')[1];
@@ -224,7 +252,7 @@ export async function collectItems(
   }
 
   // ===== 收集所有记录（全量分页） =====
-  const allRecords: any[] = [];
+  const allRecords: LemengItem[] = [];
   const firstRecords = firstPageResult.data.result?.content || [];
   allRecords.push(...firstRecords);
   console.log(`[collect-items] Page 1: ${firstRecords.length} items`);
@@ -251,7 +279,7 @@ export async function collectItems(
 
   // ===== 去重（以 item_num 为主键） =====
   const seen = new Set<string>();
-  const dedupedRecords: any[] = [];
+  const dedupedRecords: LemengItem[] = [];
   let dupCount = 0;
 
   for (const item of allRecords) {
