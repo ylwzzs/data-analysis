@@ -47,7 +47,8 @@ COMMENT ON COLUMN report_definitions.conflict_keys IS 'UPSERT 冲突键数组，
 -- 权限
 GRANT SELECT ON report_definitions TO authenticated;
 
--- 更新触发器
+-- 更新触发器（幂等：先删后建）
+DROP TRIGGER IF EXISTS update_report_definitions_updated_at ON report_definitions;
 CREATE TRIGGER update_report_definitions_updated_at
     BEFORE UPDATE ON report_definitions
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
