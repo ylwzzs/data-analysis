@@ -197,7 +197,9 @@ POST /collect_logs            → 写入采集日志
 │  ├── 输入：报表类型 + 日期范围                                    │
 │  ├── 处理：read_parquet(OOS) → 聚合计算                          │
 │  ├── 输出：结果写入 PostgreSQL                                   │
-│  ├── 报表类型：daily_sales / daily_category / weekly_trend      │
+│  ├── 配置驱动：report_definitions 表定义报表                     │
+│  ├── 新增报表：INSERT 配置 → 立即可用（无需改代码）              │
+│  ├── GET /reports：查询可用报表列表                              │
 │  └── 状态：✅ 已实现                                             │
 │                                                                 │
 │  角色 3：个性化查询                                               │
