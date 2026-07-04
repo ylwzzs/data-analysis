@@ -284,15 +284,17 @@ app.get("/schema", async (req, res) => {
   }
 });
 
-// ===== 计算端点：标准报表 =====
+// ===== 计算端点：配置驱动的报表系统 =====
 // 架构文档：DuckDB 角色 2 - 计算引擎
 // 输入：报表类型 + 日期范围
-// 处理：read_parquet(OOS) → 聚合计算
+// 处理：从 report_definitions 读取配置 → 替换 SQL 占位符 → DuckDB 执行 → 写入 PostgreSQL
 // 输出：写入 PostgreSQL 汇总表
+// 新增报表：只需 INSERT report_definitions，无需修改代码
+
 app.post("/compute", async (req, res) => {
   const startTime = Date.now();
   try {
-    const { report_type, date_from, date_to, params } = req.body;
+    const { report_type, date_from, date_to } = req.body;
 
     if (!report_type || !date_from || !date_to) {
       return res.status(400).json({ error: "Missing report_type, date_from, or date_to" });
@@ -304,31 +306,60 @@ app.post("/compute", async (req, res) => {
 
     console.log(`[compute] ${report_type}: ${date_from} to ${date_to}`);
 
-    let result;
+    // 1. 从数据库读取报表定义
+    const defResult = await pgPool.query(
+      `SELECT report_type, name, target_table, source_pattern, sql_template,
+              field_mapping, date_column, date_format, conflict_keys
+       FROM report_definitions
+       WHERE report_type = $1 AND enabled = true`,
+      [report_type]
+    );
 
-    switch (report_type) {
-      case "daily_sales":
-        result = await computeDailySales(date_from, date_to);
-        break;
-      case "daily_category":
-        result = await computeDailyCategory(date_from, date_to);
-        break;
-      case "weekly_trend":
-        result = await computeWeeklyTrend(date_from, date_to);
-        break;
-      default:
-        return res.status(400).json({ error: `Unknown report_type: ${report_type}` });
+    if (defResult.rows.length === 0) {
+      return res.status(404).json({ error: `Unknown or disabled report_type: ${report_type}` });
+    }
+
+    const config = defResult.rows[0];
+    console.log(`[compute] Using config: ${config.name} → ${config.target_table}`);
+
+    // 2. 替换 SQL 模板占位符
+    const dateFromCompact = date_from.replace(/-/g, '');
+    const dateToCompact = date_to.replace(/-/g, '');
+
+    let sql = config.sql_template;
+    sql = sql.replace(/\{\{source_pattern\}\}/g, config.source_pattern);
+    sql = sql.replace(/\{\{date_column\}\}/g, config.date_column || 'order_detail_bizday');
+    sql = sql.replace(/\{\{date_from\}\}/g, date_from);
+    sql = sql.replace(/\{\{date_to\}\}/g, date_to);
+    sql = sql.replace(/\{\{date_from_compact\}\}/g, dateFromCompact);
+    sql = sql.replace(/\{\{date_to_compact\}\}/g, dateToCompact);
+
+    // 3. 执行 DuckDB 查询
+    const rows = await runQuery(sql);
+    console.log(`[compute] ${report_type}: ${rows.length} aggregated rows`);
+
+    // 4. 根据字段映射写入 PostgreSQL
+    const mapping = config.field_mapping;
+    const conflictKeys = config.conflict_keys || [];
+    let rowsWritten = 0;
+
+    for (const row of rows) {
+      const pgRow = transformRow(row, mapping);
+      await upsertRow(config.target_table, pgRow, conflictKeys);
+      rowsWritten++;
     }
 
     const duration = Date.now() - startTime;
-    console.log(`[compute] ${report_type} done: ${result.rows_written} rows in ${duration}ms`);
+    console.log(`[compute] ${report_type} done: ${rowsWritten} rows in ${duration}ms`);
 
     res.json({
       success: true,
       report_type,
+      report_name: config.name,
+      target_table: config.target_table,
       date_from,
       date_to,
-      rows_written: result.rows_written,
+      rows_written: rowsWritten,
       duration_ms: duration
     });
 
@@ -338,179 +369,61 @@ app.post("/compute", async (req, res) => {
   }
 });
 
-// 计算每日门店销售汇总
-async function computeDailySales(dateFrom, dateTo) {
-  // 将日期格式从 YYYY-MM-DD 转换为 YYYYMMDD（乐檬数据格式）
-  const dateFromCompact = dateFrom.replace(/-/g, '');
-  const dateToCompact = dateTo.replace(/-/g, '');
+// 字段转换函数
+function transformRow(row, mapping) {
+  const result = {};
+  for (const [sourceCol, config] of Object.entries(mapping)) {
+    let value = row[sourceCol];
 
-  // 从 OOS 读取 Parquet 并聚合
-  const sql = `
-    SELECT
-      order_detail_bizday as biz_date,
-      branch_num,
-      MAX(branch_name) as branch_name,
-      CAST(COUNT(DISTINCT order_no) AS INTEGER) as total_orders,
-      CAST(COUNT(*) AS INTEGER) as total_items,
-      CAST(SUM(CAST(sale_money AS DECIMAL(12,2))) AS DECIMAL(12,2)) as total_sale,
-      CAST(SUM(CAST(profit AS DECIMAL(12,2))) AS DECIMAL(12,2)) as total_profit
-    FROM read_parquet('s3://${S3_BUCKET}/lemeng/retail_detail/**/*.parquet')
-    WHERE order_detail_bizday BETWEEN '${dateFromCompact}' AND '${dateToCompact}'
-    GROUP BY order_detail_bizday, branch_num
-    ORDER BY order_detail_bizday, branch_num
-  `;
+    // 应用转换
+    if (config.transform === 'YYYYMMDD_to_YYYY-MM-DD' && value) {
+      value = value.replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3');
+    }
 
-  const rows = await runQuery(sql);
-  console.log(`[compute] daily_sales: ${rows.length} aggregated rows`);
-
-  // 写入 PostgreSQL（upsert）
-  let rowsWritten = 0;
-  for (const row of rows) {
-    // 将日期格式转换回 YYYY-MM-DD
-    const bizDate = row.biz_date.replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3');
-    const pgSql = `
-      INSERT INTO report_daily_sales (biz_date, branch_num, branch_name, total_orders, total_items, total_sale, total_profit)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
-      ON CONFLICT (biz_date, branch_num) DO UPDATE SET
-        branch_name = EXCLUDED.branch_name,
-        total_orders = EXCLUDED.total_orders,
-        total_items = EXCLUDED.total_items,
-        total_sale = EXCLUDED.total_sale,
-        total_profit = EXCLUDED.total_profit,
-        updated_at = NOW()
-    `;
-    await pgPool.query(pgSql, [
-      bizDate,
-      row.branch_num,
-      row.branch_name,
-      row.total_orders,
-      row.total_items,
-      row.total_sale,
-      row.total_profit
-    ]);
-    rowsWritten++;
+    result[config.pg_column] = value;
   }
-
-  return { rows_written: rowsWritten };
+  return result;
 }
 
-// 计算每日品类汇总
-async function computeDailyCategory(dateFrom, dateTo) {
-  // 将日期格式从 YYYY-MM-DD 转换为 YYYYMMDD（乐檬数据格式）
-  const dateFromCompact = dateFrom.replace(/-/g, '');
-  const dateToCompact = dateTo.replace(/-/g, '');
+// UPSERT 函数（动态生成）
+async function upsertRow(tableName, row, conflictKeys) {
+  const columns = Object.keys(row);
+  const values = Object.values(row);
+  const placeholders = values.map((_, i) => `$${i + 1}`).join(', ');
+
+  // 构建 UPDATE 部分（排除冲突键）
+  const updateCols = columns.filter(c => !conflictKeys.includes(c));
+  const updateClause = updateCols.length > 0
+    ? updateCols.map(c => `${c} = EXCLUDED.${c}`).join(', ') + ', updated_at = NOW()'
+    : 'updated_at = NOW()';
 
   const sql = `
-    SELECT
-      order_detail_bizday as biz_date,
-      branch_num,
-      item_category as category,
-      CAST(COUNT(*) AS INTEGER) as total_items,
-      CAST(SUM(CAST(sale_money AS DECIMAL(12,2))) AS DECIMAL(12,2)) as total_sale,
-      CAST(SUM(CAST(profit AS DECIMAL(12,2))) AS DECIMAL(12,2)) as total_profit
-    FROM read_parquet('s3://${S3_BUCKET}/lemeng/retail_detail/**/*.parquet')
-    WHERE order_detail_bizday BETWEEN '${dateFromCompact}' AND '${dateToCompact}'
-      AND item_category IS NOT NULL AND item_category != ''
-    GROUP BY order_detail_bizday, branch_num, item_category
-    ORDER BY order_detail_bizday, branch_num, item_category
+    INSERT INTO ${tableName} (${columns.join(', ')})
+    VALUES (${placeholders})
+    ON CONFLICT (${conflictKeys.join(', ')}) DO UPDATE SET ${updateClause}
   `;
 
-  const rows = await runQuery(sql);
-  console.log(`[compute] daily_category: ${rows.length} aggregated rows`);
-
-  let rowsWritten = 0;
-  for (const row of rows) {
-    // 将日期格式转换回 YYYY-MM-DD
-    const bizDate = row.biz_date.replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3');
-    const pgSql = `
-      INSERT INTO report_daily_category (biz_date, branch_num, category, total_items, total_sale, total_profit)
-      VALUES ($1, $2, $3, $4, $5, $6)
-      ON CONFLICT (biz_date, branch_num, category) DO UPDATE SET
-        total_items = EXCLUDED.total_items,
-        total_sale = EXCLUDED.total_sale,
-        total_profit = EXCLUDED.total_profit,
-        updated_at = NOW()
-    `;
-    await pgPool.query(pgSql, [
-      bizDate,
-      row.branch_num,
-      row.category,
-      row.total_items,
-      row.total_sale,
-      row.total_profit
-    ]);
-    rowsWritten++;
-  }
-
-  return { rows_written: rowsWritten };
+  await pgPool.query(sql, values);
 }
 
-// 计算周趋势汇总
-async function computeWeeklyTrend(dateFrom, dateTo) {
-  // 将日期格式从 YYYY-MM-DD 转换为 YYYYMMDD（乐檬数据格式）
-  const dateFromCompact = dateFrom.replace(/-/g, '');
-  const dateToCompact = dateTo.replace(/-/g, '');
+// 查询报表定义列表
+app.get("/reports", async (req, res) => {
+  try {
+    if (!pgPool) {
+      return res.status(500).json({ error: "PostgreSQL not configured" });
+    }
 
-  // 计算周起始日期（周一）
-  // DuckDB 使用 STRPTIME 解析日期
-  const sql = `
-    SELECT
-      DATE_TRUNC('week', STRPTIME(order_detail_bizday, '%Y%m%d')) as week_start,
-      branch_num,
-      MAX(branch_name) as branch_name,
-      CAST(SUM(CAST(sale_money AS DECIMAL(12,2))) AS DECIMAL(12,2)) as total_sale
-    FROM read_parquet('s3://${S3_BUCKET}/lemeng/retail_detail/**/*.parquet')
-    WHERE order_detail_bizday BETWEEN '${dateFromCompact}' AND '${dateToCompact}'
-    GROUP BY DATE_TRUNC('week', STRPTIME(order_detail_bizday, '%Y%m%d')), branch_num
-    ORDER BY week_start, branch_num
-  `;
-
-  const rows = await runQuery(sql);
-  console.log(`[compute] weekly_trend: ${rows.length} aggregated rows`);
-
-  // 计算环比增长（需要查询上一周数据）
-  let rowsWritten = 0;
-  for (const row of rows) {
-    const weekStartStr = row.week_start.toISOString().split('T')[0];
-    const prevWeekStart = new Date(row.week_start);
-    prevWeekStart.setDate(prevWeekStart.getDate() - 7);
-    const prevWeekStr = prevWeekStart.toISOString().split('T')[0];
-
-    // 查询上一周销售额
-    const prevResult = await pgPool.query(
-      `SELECT total_sale FROM report_weekly_trend WHERE week_start = $1 AND branch_num = $2`,
-      [prevWeekStr, row.branch_num]
+    const result = await pgPool.query(
+      `SELECT report_type, name, target_table, enabled, created_at
+       FROM report_definitions
+       ORDER BY id`
     );
-    const prevSale = prevResult.rows[0]?.total_sale || 0;
 
-    // 计算增长率
-    const growthRate = prevSale > 0
-      ? Math.round(((row.total_sale - prevSale) / prevSale) * 100)
-      : 0;
-
-    const pgSql = `
-      INSERT INTO report_weekly_trend (week_start, branch_num, branch_name, total_sale, prev_week_sale, growth_rate)
-      VALUES ($1, $2, $3, $4, $5, $6)
-      ON CONFLICT (week_start, branch_num) DO UPDATE SET
-        branch_name = EXCLUDED.branch_name,
-        total_sale = EXCLUDED.total_sale,
-        prev_week_sale = EXCLUDED.prev_week_sale,
-        growth_rate = EXCLUDED.growth_rate,
-        updated_at = NOW()
-    `;
-    await pgPool.query(pgSql, [
-      weekStartStr,
-      row.branch_num,
-      row.branch_name,
-      row.total_sale,
-      prevSale,
-      growthRate
-    ]);
-    rowsWritten++;
+    res.json({ reports: result.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-
-  return { rows_written: rowsWritten };
-}
+});
 
 // 启动
 initDuckDB().then(() => {
