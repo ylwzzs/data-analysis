@@ -160,8 +160,7 @@ async function executeTask(task: {
         finishedAt,
         finalStatus,
         result.collected,
-        result.error || undefined,
-        { total: result.total }
+        result.error || undefined
       );
 
       console.log(`[scheduler] 商品档案采集完成: ${result.collected}/${result.total} 条 ${result.error ? '❌' : '✅'}`);
