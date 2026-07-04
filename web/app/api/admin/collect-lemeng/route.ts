@@ -3,7 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@insforge/sdk';
-import { collectOnce, getYesterdayChina, ALL_BRANCH_NUMS, LEMENG_SECRET_KEY, CollectResult } from '@/lib/collect';
+import { collectOnce, getYesterdayChina, getTodayChina, ALL_BRANCH_NUMS, LEMENG_SECRET_KEY, CollectResult } from '@/lib/collect';
 import { notifyWecom } from '@/lib/notify';
 import { ensureSchedulerInitialized } from '@/lib/scheduler';
 
@@ -62,7 +62,9 @@ export async function POST(req: NextRequest) {
     }
 
     const params = task.params || {};
-    const dates = params.dates || [getYesterdayChina(), getYesterdayChina()];
+    const dates = params.date_mode === 'today'
+      ? [getTodayChina(), getTodayChina()]
+      : (params.dates || [getYesterdayChina(), getYesterdayChina()]);
     const branchNums = params.branch_nums || ALL_BRANCH_NUMS;
     const pageSize = params.page_size || 200;
 
@@ -74,7 +76,7 @@ export async function POST(req: NextRequest) {
     const branchNumsStr = branchNums.join(',');
 
     // ===== 对账重试循环 =====
-    let lastResult: CollectResult = { records: [], apiTotal: 0, storagePath: '', error: '' };
+    let lastResult: CollectResult = { records: [], apiTotal: 0, storagePath: '', error: '', newApiTotal: 0, skipped: false };
     let verified = false;
     let retryCount = 0;
 

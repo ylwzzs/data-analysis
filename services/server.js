@@ -259,6 +259,148 @@ app.post("/transform", async (req, res) => {
   }
 });
 
+// ===== 增量合并端点（与 /transform 互补）=====
+// 用途：增量采集时把新拉取的尾部记录合并进已存在的 all.parquet，按 dedupe_key 去重后写回。
+// 与 /transform 的区别：/transform 覆盖写（每小时全量核对用）；/merge 读旧+并新+去重写回（增量续采用）。
+// 无已有文件时退化为 /transform 行为（仅写新记录）。
+app.post("/merge", async (req, res) => {
+  const startTime = Date.now();
+  try {
+    const { records, config } = req.body;
+    if (!records || !Array.isArray(records) || records.length === 0) {
+      return res.status(400).json({ error: "Missing or empty records" });
+    }
+    if (!config || !config.date) {
+      return res.status(400).json({ error: "Missing config.date" });
+    }
+
+    const {
+      date,
+      source = 'unknown',
+      partition_by = [],
+      dedupe_key = [],
+      required_fields = [],
+      output_format = 'parquet',
+      compression = 'zstd',
+      base_path = null
+    } = config;
+
+    const totalRecords = records.length;
+    console.log(`[merge] ${totalRecords} records from ${source} for ${date}`);
+
+    // 1. 新记录入临时表（全 VARCHAR，与 /transform 一致）
+    const newCols = Object.keys(records[0]);
+    const columnsDef = newCols.map(c => `"${c}" VARCHAR`).join(', ');
+    await runQuery(`CREATE OR REPLACE TABLE temp_raw (${columnsDef})`);
+    const batchSize = 1000;
+    for (let i = 0; i < records.length; i += batchSize) {
+      const batch = records.slice(i, i + batchSize);
+      const values = batch.map(row => {
+        const cols = newCols.map(c => escapeSQL(row[c]));
+        return '(' + cols.join(', ') + ')';
+      }).join(', ');
+      await runQuery(`INSERT INTO temp_raw VALUES ${values}`);
+    }
+
+    // 2. 校验（同 /transform）
+    let invalidCount = 0;
+    if (required_fields.length > 0) {
+      const whereClause = required_fields.map(f => `"${f}" IS NULL OR "${f}" = ''`).join(' OR ');
+      const result = await runQuery(`SELECT CAST(COUNT(*) AS INTEGER) as cnt FROM temp_raw WHERE ${whereClause}`);
+      invalidCount = result[0]?.cnt || 0;
+      if (invalidCount > 0) console.warn(`[merge] ${invalidCount} invalid rows`);
+    }
+
+    // 3. 探测已有 all.parquet（读一行探活，失败即视为首次写入）
+    const basePath = base_path || `${source}/${date}`;
+    const allFileName = `${basePath}/all.${output_format}`;
+    const allS3Path = `s3://${S3_BUCKET}/${allFileName}`;
+    let hasExisting = false;
+    let existingCols = [];
+    try {
+      await runQuery(`SELECT * FROM read_parquet('${allS3Path}') LIMIT 1`);
+      hasExisting = true;
+    } catch (e) {
+      console.log(`[merge] no existing parquet at ${allFileName}, writing fresh`);
+    }
+
+    // 4. 合并：两侧列取并集，缺失列填 NULL（全 VARCHAR）；保证列名对齐鲁棒
+    let combinedCount = totalRecords;
+    if (hasExisting) {
+      await runQuery(`CREATE OR REPLACE TABLE old_data AS SELECT * FROM read_parquet('${allS3Path}')`);
+      const desc = await runQuery("DESCRIBE old_data");
+      existingCols = desc.map(c => c.column_name).filter(Boolean);
+      const allCols = Array.from(new Set([...existingCols, ...newCols])).sort();
+      const selectList = (avail) => allCols
+        .map(c => avail.includes(c) ? `"${c}"` : `CAST(NULL AS VARCHAR) AS "${c}"`)
+        .join(', ');
+      await runQuery(`CREATE OR REPLACE TABLE combined AS SELECT ${selectList(existingCols)} FROM old_data UNION ALL SELECT ${selectList(newCols)} FROM temp_raw`);
+      const c = await runQuery("SELECT CAST(COUNT(*) AS INTEGER) as cnt FROM combined");
+      combinedCount = c[0]?.cnt || totalRecords;
+    } else {
+      await runQuery("CREATE OR REPLACE TABLE combined AS SELECT * FROM temp_raw");
+    }
+
+    // 5. 去重（DISTINCT ON，重叠页/重复行自动合并）
+    if (dedupe_key.length > 0) {
+      const keyCols = dedupe_key.join(', ');
+      await runQuery(`CREATE OR REPLACE TABLE deduped AS SELECT DISTINCT ON (${keyCols}) * FROM combined ORDER BY ${keyCols}`);
+    } else {
+      await runQuery("CREATE OR REPLACE TABLE deduped AS SELECT * FROM combined");
+    }
+    const dedupedResult = await runQuery("SELECT CAST(COUNT(*) AS INTEGER) as cnt FROM deduped");
+    const dedupedCount = dedupedResult[0]?.cnt || combinedCount;
+
+    // 6. 写回（覆盖 all.parquet + 门店分片，输出与 /transform 一致，消费者无感）
+    const exportResults = [];
+    if (partition_by.length > 0) {
+      const partitionValues = await runQuery(
+        `SELECT DISTINCT ${partition_by.join(', ')} FROM deduped ORDER BY ${partition_by.join(', ')}`
+      );
+      for (const pv of partitionValues) {
+        const partitionKey = partition_by.map(col => `${col}_${pv[col]}`).join('_');
+        const fileName = `${basePath}/${partitionKey}.${output_format}`;
+        const s3Path = `s3://${S3_BUCKET}/${fileName}`;
+        const whereClause = partition_by.map(col => `${col} = ${pv[col]}`).join(' AND ');
+        await runQuery(`COPY (SELECT * FROM deduped WHERE ${whereClause}) TO '${s3Path}' (FORMAT ${output_format.toUpperCase()}, COMPRESSION ${compression.toUpperCase()})`);
+        const cntResult = await runQuery(`SELECT CAST(COUNT(*) AS INTEGER) as cnt FROM deduped WHERE ${whereClause}`);
+        exportResults.push({ file: fileName, partition: pv, records: cntResult[0]?.cnt || 0 });
+      }
+    }
+    await runQuery(`COPY deduped TO '${allS3Path}' (FORMAT ${output_format.toUpperCase()}, COMPRESSION ${compression.toUpperCase()})`);
+
+    // 7. 清理
+    await runQuery("DROP TABLE IF EXISTS temp_raw");
+    await runQuery("DROP TABLE IF EXISTS old_data");
+    await runQuery("DROP TABLE IF EXISTS combined");
+    await runQuery("DROP TABLE IF EXISTS deduped");
+
+    const duration = Date.now() - startTime;
+    console.log(`[merge] Done: combined ${combinedCount} → deduped ${dedupedCount} in ${duration}ms (existing=${hasExisting})`);
+    res.json({
+      success: true,
+      merged: hasExisting,
+      new_records: totalRecords,
+      combined_records: combinedCount,
+      deduped_records: dedupedCount,
+      duplicates_removed: combinedCount - dedupedCount,
+      invalid_records: invalidCount,
+      partition_files: exportResults,
+      combined_file: allFileName,
+      duration_ms: duration
+    });
+  } catch (err) {
+    console.error("[merge] Error:", err.message);
+    try {
+      await runQuery("DROP TABLE IF EXISTS temp_raw");
+      await runQuery("DROP TABLE IF EXISTS old_data");
+      await runQuery("DROP TABLE IF EXISTS combined");
+      await runQuery("DROP TABLE IF EXISTS deduped");
+    } catch {}
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 兼容旧的 /import 端点（乐檬专用）
 app.post("/import", async (req, res) => {
   const { records, date, source } = req.body;

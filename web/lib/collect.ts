@@ -166,12 +166,26 @@ export function getYesterdayChina(): string {
   return chinaTime.toISOString().split('T')[0];
 }
 
+// 使用中国时区获取今天的日期（零售明细当天增量采集用）
+export function getTodayChina(): string {
+  const now = new Date();
+  const chinaTime = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+  return chinaTime.toISOString().split('T')[0];
+}
+
 // ===== 单次采集 + 转换 =====
 export interface CollectResult {
   records: any[];
   apiTotal: number;
   storagePath: string;
   error: string;
+  newApiTotal: number; // 当次 API 总数（供 scheduler 更新水位线；incremental 无新增时 = watermarkLastCount）
+  skipped: boolean;    // incremental 模式且无新增数据
+}
+
+export interface CollectOptions {
+  mode?: 'full' | 'incremental';
+  watermarkLastCount?: number; // 上次成功采集后的总数（水位线），仅 incremental 用
 }
 
 export async function collectOnce(
@@ -180,8 +194,11 @@ export async function collectOnce(
   branchNumsStr: string,
   dates: string[],
   pageSize: number = 200,
+  options?: CollectOptions,
 ): Promise<CollectResult> {
-  const result: CollectResult = { records: [], apiTotal: 0, storagePath: '', error: '' };
+  const mode = options?.mode || 'full';
+  const watermarkLastCount = options?.watermarkLastCount ?? 0;
+  const result: CollectResult = { records: [], apiTotal: 0, storagePath: '', error: '', newApiTotal: 0, skipped: false };
 
   // ===== 预热：激活 Token 会话 =====
   const warmBody = buildBody(branchNums, dates, 1, 5);
@@ -207,6 +224,7 @@ export async function collectOnce(
     console.warn(`[collect] Count query failed, will paginate without limit`);
     result.apiTotal = 10000;
   }
+  result.newApiTotal = result.apiTotal;
 
   if (result.apiTotal === 0) {
     return result;
@@ -214,8 +232,18 @@ export async function collectOnce(
 
   // ===== 分页拉取 =====
   const totalPages = Math.ceil(result.apiTotal / pageSize);
-  const maxPages = 100;
+  const maxPages = 500; // 兜底防爆（500*pageSize 足够覆盖任何一天的全量）
   let page = 1;
+  // 增量模式：总数未超水位线 → 无新增跳过；否则从水位线页（重叠 1 页兜底边界）续采尾部
+  if (mode === 'incremental') {
+    if (result.apiTotal <= watermarkLastCount) {
+      console.log(`[collect] Incremental: apiTotal ${result.apiTotal} <= watermark ${watermarkLastCount}, no new data, skip`);
+      result.skipped = true;
+      return result;
+    }
+    page = Math.max(1, Math.floor(watermarkLastCount / pageSize));
+    console.log(`[collect] Incremental: resume from page ${page} (watermark ${watermarkLastCount}, total ${result.apiTotal})`);
+  }
   let consecutiveErrors = 0;
 
   while (page <= totalPages && page <= maxPages) {
@@ -253,15 +281,18 @@ export async function collectOnce(
     page++;
   }
 
-  // ===== 调用 DuckDB 转换为 Parquet =====
+  // ===== 写入 Parquet：full 用 /transform 覆盖；incremental 用 /merge 合并 =====
   if (result.records.length > 0) {
     try {
       const flatRecords = flattenRecords(result.records);
       const dateStr = dates[0];
+      const isIncremental = mode === 'incremental';
+      const endpoint = isIncremental ? '/merge' : '/transform';
+      const action = isIncremental ? 'merge' : 'transform';
 
-      console.log(`[collect] Calling DuckDB transform: ${flatRecords.length} records`);
+      console.log(`[collect] Calling DuckDB ${action}: ${flatRecords.length} records`);
 
-      const transformRes = await fetch(`${DUCKDB_URL}/transform`, {
+      const duckRes = await fetch(`${DUCKDB_URL}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -279,25 +310,25 @@ export async function collectOnce(
         })
       });
 
-      if (!transformRes.ok) {
-        const errText = await transformRes.text();
-        throw new Error(`DuckDB transform failed: ${transformRes.status} ${errText}`);
+      if (!duckRes.ok) {
+        const errText = await duckRes.text();
+        throw new Error(`DuckDB ${action} failed: ${duckRes.status} ${errText}`);
       }
 
-      const transformResult = await transformRes.json();
-      if (!transformResult.success) {
-        throw new Error(transformResult.error || 'Transform failed');
+      const duckResult = await duckRes.json();
+      if (!duckResult.success) {
+        throw new Error(duckResult.error || `${action} failed`);
       }
 
-      result.storagePath = transformResult.combined_file;
-      console.log(`[collect] Parquet export success: ${result.storagePath}`);
+      result.storagePath = duckResult.combined_file;
+      console.log(`[collect] Parquet ${action} success: ${result.storagePath}`);
 
-      if (transformResult.invalid_records > 0 || transformResult.duplicates_removed > 0) {
-        console.warn(`[collect] Data quality: ${transformResult.invalid_records} invalid, ${transformResult.duplicates_removed} duplicates`);
+      if (duckResult.invalid_records > 0 || duckResult.duplicates_removed > 0) {
+        console.warn(`[collect] Data quality: ${duckResult.invalid_records} invalid, ${duckResult.duplicates_removed} duplicates`);
       }
-    } catch (transformErr: any) {
-      console.error(`[collect] DuckDB transform failed: ${transformErr.message}`);
-      result.error += (result.error ? '; ' : '') + `Transform failed: ${transformErr.message}`;
+    } catch (duckErr: any) {
+      console.error(`[collect] DuckDB ${mode === 'incremental' ? 'merge' : 'transform'} failed: ${duckErr.message}`);
+      result.error += (result.error ? '; ' : '') + `${mode === 'incremental' ? 'Merge' : 'Transform'} failed: ${duckErr.message}`;
     }
   }
 

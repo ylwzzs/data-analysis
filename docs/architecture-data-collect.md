@@ -14,11 +14,11 @@ DuckDB 服务承担三个角色：
 │                                                                         │
 │  ┌─────────────────────────────────────────────────────────────────┐   │
 │  │  角色 1：数据转换                                                │   │
-│  │  端点：POST /transform                                           │   │
+│  │  端点：POST /transform（全量覆盖）/ POST /merge（增量合并）      │   │
 │  │  输入：JSON 明细数据 + 配置                                      │   │
-│  │  处理：校验、去重、分片                                          │   │
-│  │  输出：Parquet 写入 OOS                                          │   │
-│  │  触发：采集完成后调用                                            │   │
+│  │  处理：校验、去重、分片；/merge 读旧 parquet+并新+去重写回       │   │
+│  │  输出：Parquet 写入 OOS（all.parquet 为权威文件）                │   │
+│  │  触发：采集完成后调用（全量→/transform，增量→/merge）            │   │
 │  │  状态：✅ 已实现                                                 │   │
 │  └─────────────────────────────────────────────────────────────────┘   │
 │                                                                         │
@@ -45,6 +45,22 @@ DuckDB 服务承担三个角色：
 │                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
+
+## 数据源与采集任务架构（两层）
+
+```
+数据源（data_sources）          ← 持有鉴权：token / appid+secret（按 auth_type）
+├── 乐檬（auth_type=bearer，单条 auth_credentials.token，5 天有效）
+│   ├── 采集任务：商品档案采集   ← 共用上层的 token
+│   └── 采集任务：销售订单明细采集 ← 共用上层的 token
+└── 金蝶（未来，auth_type=kingdee，credential_data 存 appid/secret）
+    └── 采集任务：…              ← 共用上层鉴权
+```
+
+- **鉴权归属数据源**：一个外部系统 = 一个数据源，其下所有采集任务共用该源的唯一鉴权。
+  杜绝「同系统拆多源、各存一份 token」导致的一活一死。
+- **scheduler 读凭证**：按 `collect_tasks.source_id` 取 `auth_credentials`，同源任务自然共用，无需额外覆盖字段。
+- **扩展约定**：新增源类型（金蝶等）时，scheduler 按 `data_source.auth_type` 分派鉴权方式（当前仅 bearer/token）。
 
 ## 数据流架构
 
@@ -157,9 +173,21 @@ Next.js web 容器
 
 任务配置：
 └── collect_tasks 表
-    ├── schedule_cron：cron 表达式
+    ├── schedule_cron：cron 表达式（Asia/Shanghai）
     ├── enabled：是否启用
-    └── 每日凌晨 2:00 执行采集
+    ├── params：任务参数（task_type / date_mode / page_size / 运行时水位线 watermark）
+    └── 防重入：runningTasks 集合，并发触发跳过
+
+两种采集模式（零售明细）：
+├── 全量（full）：新一天 / 距上次全量≥55min / 无水位线 时触发
+│   └── count → 全部分页 → DuckDB /transform 覆盖 all.parquet（每小时核对一次）
+└── 增量（incremental）：其余每 5 分钟触发
+    └── count → 若总数>水位线则从上次页（重叠1页）续采尾部 → DuckDB /merge 合并去重写回
+
+水位线 watermark（写回 collect_tasks.params）：{ date, last_count, last_full_ts }
+├── 仅落盘成功才推进 last_count；失败保持旧值，下次多重叠（安全）
+├── 跨天：date≠今天 → 自动 full，新分区 lemeng/retail_detail/{新日期}/
+└── 当天数据：params.date_mode=today → 运行时算 [今天,今天]（dates 必须双元素区间）
 ```
 
 ## 鉴权方案
@@ -218,6 +246,8 @@ OpenClaw SQL → DuckDB /query → 鉴权 → read_parquet → 返回结果
 | 汇总数据存储 | PostgreSQL |
 | 报表查询 | PostgreSQL + PostgREST |
 | PostgreSQL 鉴权 | RLS + 部门 ID |
+| 鉴权归属 | 数据源层（同源任务共用一 token），非任务层 |
+| 零售明细采集模式 | 当天数据、8-24 点每 5 分钟增量 + 每小时全量核对 |
 
 ## 待讨论/待实现
 

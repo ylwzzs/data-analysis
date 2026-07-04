@@ -4,7 +4,7 @@
 
 import cron, { ScheduledTask } from 'node-cron';
 import { createClient } from '@insforge/sdk';
-import { collectOnce, getYesterdayChina, ALL_BRANCH_NUMS, CollectResult } from './collect';
+import { collectOnce, getYesterdayChina, getTodayChina, ALL_BRANCH_NUMS, CollectResult } from './collect';
 import { collectItems, CollectItemsResult } from './collect-items';
 import { notifyWecom } from './notify';
 
@@ -13,6 +13,9 @@ const INSFORGE_API_KEY = process.env.INSFORGE_API_KEY!;
 
 // 存储已注册的 cron 任务
 const scheduledJobs: Map<string, ScheduledTask> = new Map();
+
+// 防重入：同一任务并发触发时跳过（5 分钟周期、单次约 30-60s，避免重叠）
+const runningTasks = new Set<string>();
 
 // 是否已初始化
 let initialized = false;
@@ -110,6 +113,12 @@ async function executeTask(task: {
   function_slug: string;
   params: any;
 }) {
+  // 防重入：已在运行则跳过本次触发
+  if (runningTasks.has(task.id)) {
+    console.warn(`[scheduler] 任务 ${task.name} (${task.id}) 已在运行，跳过本次触发`);
+    return;
+  }
+  runningTasks.add(task.id);
   const startedAt = new Date();
   const client = createClient({ baseUrl: INSFORGE_API_BASE, anonKey: INSFORGE_API_KEY });
 
@@ -169,65 +178,97 @@ async function executeTask(task: {
     }
 
     // ===== 订单明细采集（默认） =====
-    const dates = params.dates || [getYesterdayChina(), getYesterdayChina()];
+    const today = getTodayChina();
+    const dates = params.date_mode === 'today'
+      ? [today, today]
+      : (params.dates || [getYesterdayChina(), getYesterdayChina()]);
     const branchNums = params.branch_nums || ALL_BRANCH_NUMS;
     const branchNumsStr = branchNums.join(',');
     const pageSize = params.page_size || 200;
 
-    console.log(`[scheduler] 任务 ${task.name}: dates=${dates[0]}, branches=${branchNums.length}`);
+    // 模式判定：新一天 / 距上次全量≥55min / 无水位线 → full（覆盖 + 每小时核对）；否则 incremental（续采尾部）
+    const watermark = params.watermark || {};
+    const watermarkLastCount: number = watermark.last_count || 0;
+    const mode: 'full' | 'incremental' =
+      (watermark.date !== today ||
+        Date.now() - (watermark.last_full_ts || 0) >= 55 * 60 * 1000 ||
+        watermark.last_count == null)
+        ? 'full'
+        : 'incremental';
 
-    // 3. 对账重试循环
-    let lastResult: CollectResult = { records: [], apiTotal: 0, storagePath: '', error: '' };
+    console.log(`[scheduler] 任务 ${task.name}: dates=${dates[0]}, branches=${branchNums.length}, mode=${mode}`);
+
+    let lastResult: CollectResult = { records: [], apiTotal: 0, storagePath: '', error: '', newApiTotal: 0, skipped: false };
     let verified = false;
-    let retryCount = 0;
 
-    for (let attempt = 1; attempt <= MAX_VERIFY_RETRIES; attempt++) {
-      console.log(`[scheduler] === 第 ${attempt} 次采集 ${attempt > 1 ? '(对账重试)' : ''} ===`);
+    if (mode === 'incremental') {
+      // 增量：单次拉尾部，不重试（下一轮或每小时 full 会补全）
+      lastResult = await collectOnce(authToken, branchNums, branchNumsStr, dates, pageSize, { mode: 'incremental', watermarkLastCount });
 
-      lastResult = await collectOnce(authToken, branchNums, branchNumsStr, dates, pageSize);
-
-      // Token 过期直接退出
       if (lastResult.error.startsWith('Token expired')) {
         await writeLog(client, task.id, startedAt, new Date(), 'failed', 0, lastResult.error);
         await notifyWecom('❌ Token 过期', `**任务**: ${task.name}\n**错误**: ${lastResult.error}`);
         return;
       }
+      verified = true; // 增量不做条数对账，交给每小时 full 核对
+    } else {
+      // 全量：保留对账重试循环
+      for (let attempt = 1; attempt <= MAX_VERIFY_RETRIES; attempt++) {
+        console.log(`[scheduler] === 第 ${attempt} 次采集 ${attempt > 1 ? '(对账重试)' : ''} ===`);
 
-      // 无数据直接退出
-      if (lastResult.apiTotal === 0) {
-        await writeLog(client, task.id, startedAt, new Date(), 'success', 0);
-        return;
-      }
+        lastResult = await collectOnce(authToken, branchNums, branchNumsStr, dates, pageSize, { mode: 'full' });
 
-      // 对账
-      const missing = lastResult.apiTotal - lastResult.records.length;
-      verified = lastResult.records.length >= lastResult.apiTotal;
+        // Token 过期直接退出
+        if (lastResult.error.startsWith('Token expired')) {
+          await writeLog(client, task.id, startedAt, new Date(), 'failed', 0, lastResult.error);
+          await notifyWecom('❌ Token 过期', `**任务**: ${task.name}\n**错误**: ${lastResult.error}`);
+          return;
+        }
 
-      if (verified) {
-        console.log(`[scheduler] ✅ 对账通过: ${lastResult.records.length}/${lastResult.apiTotal}`);
-        break;
-      }
+        // 无数据直接退出
+        if (lastResult.apiTotal === 0) {
+          await writeLog(client, task.id, startedAt, new Date(), 'success', 0);
+          return;
+        }
 
-      retryCount = attempt;
+        // 对账
+        const missing = lastResult.apiTotal - lastResult.records.length;
+        verified = lastResult.records.length >= lastResult.apiTotal;
 
-      if (attempt < MAX_VERIFY_RETRIES) {
-        console.warn(`[scheduler] ⚠️ 对账失败: 缺少 ${missing} 条，5 秒后重试...`);
-        await new Promise(r => setTimeout(r, 5000));
-      } else {
-        console.error(`[scheduler] ❌ ${MAX_VERIFY_RETRIES} 次均失败: 缺少 ${missing} 条`);
-        await notifyWecom(
-          '❌ 定时采集不完整（已重试3次）',
-          `**任务**: ${task.name}\n**日期**: ${dates[0]}\n**采集数**: ${lastResult.records.length}\n**API总数**: ${lastResult.apiTotal}\n**缺少**: ${missing} 条\n**建议**: 请检查网络或手动重新采集`
-        );
-        lastResult.error += `; 对账失败(重试${MAX_VERIFY_RETRIES}次): 缺少 ${missing} 条`;
+        if (verified) {
+          console.log(`[scheduler] ✅ 对账通过: ${lastResult.records.length}/${lastResult.apiTotal}`);
+          break;
+        }
+
+        if (attempt < MAX_VERIFY_RETRIES) {
+          console.warn(`[scheduler] ⚠️ 对账失败: 缺少 ${missing} 条，5 秒后重试...`);
+          await new Promise(r => setTimeout(r, 5000));
+        } else {
+          console.error(`[scheduler] ❌ ${MAX_VERIFY_RETRIES} 次均失败: 缺少 ${missing} 条`);
+          await notifyWecom(
+            '❌ 定时采集不完整（已重试3次）',
+            `**任务**: ${task.name}\n**日期**: ${dates[0]}\n**采集数**: ${lastResult.records.length}\n**API总数**: ${lastResult.apiTotal}\n**缺少**: ${missing} 条\n**建议**: 请检查网络或手动重新采集`
+          );
+          lastResult.error += `; 对账失败(重试${MAX_VERIFY_RETRIES}次): 缺少 ${missing} 条`;
+        }
       }
     }
 
-    // 4. 更新任务状态
+    // 更新水位线：仅当本次落盘成功（无 error）才推进 last_count；失败保持旧水位线，下次多重叠
     const finishedAt = new Date();
+    const nowMs = finishedAt.getTime();
+    const persistOk = !lastResult.error;
+    const newWatermark = {
+      date: today,
+      last_count: persistOk ? lastResult.newApiTotal : watermarkLastCount,
+      last_full_ts: (mode === 'full' && persistOk) ? nowMs : (watermark.last_full_ts || nowMs),
+    };
     await client.database
       .from('collect_tasks')
-      .update({ last_run_at: finishedAt.toISOString() })
+      .update({
+        last_run_at: finishedAt.toISOString(),
+        params: { ...params, watermark: newWatermark },
+      })
       .eq('id', task.id);
 
     const finalStatus = lastResult.error ? 'partial' : 'success';
@@ -240,17 +281,21 @@ async function executeTask(task: {
       lastResult.records.length,
       lastResult.error || undefined,
       {
+        mode,
+        skipped: lastResult.skipped,
         storage_path: lastResult.storagePath,
         verification: { api_total: lastResult.apiTotal, missing: lastResult.apiTotal - lastResult.records.length, verified }
       }
     );
 
-    console.log(`[scheduler] 任务 ${task.name}: ${finalStatus} (${lastResult.records.length} 条) ${verified ? '✅' : '❌'}`);
+    console.log(`[scheduler] 任务 ${task.name}: ${finalStatus} ${mode}${lastResult.skipped ? '(skipped)' : `(${lastResult.records.length} 条)`} ${verified ? '✅' : '❌'}`);
 
   } catch (error: any) {
     console.error(`[scheduler] 任务 ${task.name} 异常:`, error.message);
     await writeLog(client, task.id, startedAt, new Date(), 'failed', 0, error.message);
     await notifyWecom('❌ 定时采集异常', `**任务**: ${task.name}\n**错误**: ${error.message}`);
+  } finally {
+    runningTasks.delete(task.id);
   }
 }
 
