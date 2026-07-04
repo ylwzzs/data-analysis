@@ -204,7 +204,7 @@ export async function collectItems(
 
   // ===== 分页拉取 =====
   const totalPages = Math.ceil(total / pageSize);
-  const maxPages = 50;
+  const maxPages = Math.ceil(total / pageSize); // 采集全部，不限制页数
 
   for (let page = 2; page <= totalPages && page <= maxPages; page++) {
     const bodyStr = buildBody(branchId, page, pageSize);
