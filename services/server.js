@@ -340,21 +340,24 @@ app.post("/compute", async (req, res) => {
 
 // 计算每日门店销售汇总
 async function computeDailySales(dateFrom, dateTo) {
-  // 从 OOS 读取 Parquet 并聚合（使用 hive partition 或 glob 模式）
+  // 将日期格式从 YYYY-MM-DD 转换为 YYYYMMDD（乐檬数据格式）
+  const dateFromCompact = dateFrom.replace(/-/g, '');
+  const dateToCompact = dateTo.replace(/-/g, '');
+
+  // 从 OOS 读取 Parquet 并聚合
   const sql = `
     SELECT
-      biz_date,
+      order_detail_bizday as biz_date,
       branch_num,
       MAX(branch_name) as branch_name,
       CAST(COUNT(DISTINCT order_no) AS INTEGER) as total_orders,
       CAST(COUNT(*) AS INTEGER) as total_items,
-      CAST(SUM(CAST(sale AS DECIMAL(12,2))) AS DECIMAL(12,2)) as total_sale,
+      CAST(SUM(CAST(sale_money AS DECIMAL(12,2))) AS DECIMAL(12,2)) as total_sale,
       CAST(SUM(CAST(profit AS DECIMAL(12,2))) AS DECIMAL(12,2)) as total_profit
-    FROM read_parquet('s3://${S3_BUCKET}/lemeng/retail_detail/**/*.parquet',
-      hive_partitioning=true)
-    WHERE biz_date BETWEEN '${dateFrom}' AND '${dateTo}'
-    GROUP BY biz_date, branch_num
-    ORDER BY biz_date, branch_num
+    FROM read_parquet('s3://${S3_BUCKET}/lemeng/retail_detail/**/*.parquet')
+    WHERE order_detail_bizday BETWEEN '${dateFromCompact}' AND '${dateToCompact}'
+    GROUP BY order_detail_bizday, branch_num
+    ORDER BY order_detail_bizday, branch_num
   `;
 
   const rows = await runQuery(sql);
@@ -363,6 +366,8 @@ async function computeDailySales(dateFrom, dateTo) {
   // 写入 PostgreSQL（upsert）
   let rowsWritten = 0;
   for (const row of rows) {
+    // 将日期格式转换回 YYYY-MM-DD
+    const bizDate = row.biz_date.replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3');
     const pgSql = `
       INSERT INTO report_daily_sales (biz_date, branch_num, branch_name, total_orders, total_items, total_sale, total_profit)
       VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -375,7 +380,7 @@ async function computeDailySales(dateFrom, dateTo) {
         updated_at = NOW()
     `;
     await pgPool.query(pgSql, [
-      row.biz_date,
+      bizDate,
       row.branch_num,
       row.branch_name,
       row.total_orders,
@@ -391,20 +396,23 @@ async function computeDailySales(dateFrom, dateTo) {
 
 // 计算每日品类汇总
 async function computeDailyCategory(dateFrom, dateTo) {
+  // 将日期格式从 YYYY-MM-DD 转换为 YYYYMMDD（乐檬数据格式）
+  const dateFromCompact = dateFrom.replace(/-/g, '');
+  const dateToCompact = dateTo.replace(/-/g, '');
+
   const sql = `
     SELECT
-      biz_date,
+      order_detail_bizday as biz_date,
       branch_num,
-      category,
+      item_category as category,
       CAST(COUNT(*) AS INTEGER) as total_items,
-      CAST(SUM(CAST(sale AS DECIMAL(12,2))) AS DECIMAL(12,2)) as total_sale,
+      CAST(SUM(CAST(sale_money AS DECIMAL(12,2))) AS DECIMAL(12,2)) as total_sale,
       CAST(SUM(CAST(profit AS DECIMAL(12,2))) AS DECIMAL(12,2)) as total_profit
-    FROM read_parquet('s3://${S3_BUCKET}/lemeng/retail_detail/**/*.parquet',
-      hive_partitioning=true)
-    WHERE biz_date BETWEEN '${dateFrom}' AND '${dateTo}'
-      AND category IS NOT NULL AND category != ''
-    GROUP BY biz_date, branch_num, category
-    ORDER BY biz_date, branch_num, category
+    FROM read_parquet('s3://${S3_BUCKET}/lemeng/retail_detail/**/*.parquet')
+    WHERE order_detail_bizday BETWEEN '${dateFromCompact}' AND '${dateToCompact}'
+      AND item_category IS NOT NULL AND item_category != ''
+    GROUP BY order_detail_bizday, branch_num, item_category
+    ORDER BY order_detail_bizday, branch_num, item_category
   `;
 
   const rows = await runQuery(sql);
@@ -412,6 +420,8 @@ async function computeDailyCategory(dateFrom, dateTo) {
 
   let rowsWritten = 0;
   for (const row of rows) {
+    // 将日期格式转换回 YYYY-MM-DD
+    const bizDate = row.biz_date.replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3');
     const pgSql = `
       INSERT INTO report_daily_category (biz_date, branch_num, category, total_items, total_sale, total_profit)
       VALUES ($1, $2, $3, $4, $5, $6)
@@ -422,7 +432,7 @@ async function computeDailyCategory(dateFrom, dateTo) {
         updated_at = NOW()
     `;
     await pgPool.query(pgSql, [
-      row.biz_date,
+      bizDate,
       row.branch_num,
       row.category,
       row.total_items,
@@ -437,17 +447,21 @@ async function computeDailyCategory(dateFrom, dateTo) {
 
 // 计算周趋势汇总
 async function computeWeeklyTrend(dateFrom, dateTo) {
+  // 将日期格式从 YYYY-MM-DD 转换为 YYYYMMDD（乐檬数据格式）
+  const dateFromCompact = dateFrom.replace(/-/g, '');
+  const dateToCompact = dateTo.replace(/-/g, '');
+
   // 计算周起始日期（周一）
+  // DuckDB 使用 STRPTIME 解析日期
   const sql = `
     SELECT
-      DATE_TRUNC('week', biz_date) as week_start,
+      DATE_TRUNC('week', STRPTIME(order_detail_bizday, '%Y%m%d')) as week_start,
       branch_num,
       MAX(branch_name) as branch_name,
-      CAST(SUM(CAST(sale AS DECIMAL(12,2))) AS DECIMAL(12,2)) as total_sale
-    FROM read_parquet('s3://${S3_BUCKET}/lemeng/retail_detail/**/*.parquet',
-      hive_partitioning=true)
-    WHERE biz_date BETWEEN '${dateFrom}' AND '${dateTo}'
-    GROUP BY DATE_TRUNC('week', biz_date), branch_num
+      CAST(SUM(CAST(sale_money AS DECIMAL(12,2))) AS DECIMAL(12,2)) as total_sale
+    FROM read_parquet('s3://${S3_BUCKET}/lemeng/retail_detail/**/*.parquet')
+    WHERE order_detail_bizday BETWEEN '${dateFromCompact}' AND '${dateToCompact}'
+    GROUP BY DATE_TRUNC('week', STRPTIME(order_detail_bizday, '%Y%m%d')), branch_num
     ORDER BY week_start, branch_num
   `;
 
@@ -457,6 +471,7 @@ async function computeWeeklyTrend(dateFrom, dateTo) {
   // 计算环比增长（需要查询上一周数据）
   let rowsWritten = 0;
   for (const row of rows) {
+    const weekStartStr = row.week_start.toISOString().split('T')[0];
     const prevWeekStart = new Date(row.week_start);
     prevWeekStart.setDate(prevWeekStart.getDate() - 7);
     const prevWeekStr = prevWeekStart.toISOString().split('T')[0];
@@ -484,7 +499,7 @@ async function computeWeeklyTrend(dateFrom, dateTo) {
         updated_at = NOW()
     `;
     await pgPool.query(pgSql, [
-      row.week_start,
+      weekStartStr,
       row.branch_num,
       row.branch_name,
       row.total_sale,
