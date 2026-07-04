@@ -340,7 +340,7 @@ app.post("/compute", async (req, res) => {
 
 // 计算每日门店销售汇总
 async function computeDailySales(dateFrom, dateTo) {
-  // 从 OOS 读取 Parquet 并聚合
+  // 从 OOS 读取 Parquet 并聚合（使用 hive partition 或 glob 模式）
   const sql = `
     SELECT
       biz_date,
@@ -350,7 +350,8 @@ async function computeDailySales(dateFrom, dateTo) {
       CAST(COUNT(*) AS INTEGER) as total_items,
       CAST(SUM(CAST(sale AS DECIMAL(12,2))) AS DECIMAL(12,2)) as total_sale,
       CAST(SUM(CAST(profit AS DECIMAL(12,2))) AS DECIMAL(12,2)) as total_profit
-    FROM read_parquet('s3://${S3_BUCKET}/lemeng/retail_detail/{${dateFrom},${dateTo}}/*.parquet')
+    FROM read_parquet('s3://${S3_BUCKET}/lemeng/retail_detail/**/*.parquet',
+      hive_partitioning=true)
     WHERE biz_date BETWEEN '${dateFrom}' AND '${dateTo}'
     GROUP BY biz_date, branch_num
     ORDER BY biz_date, branch_num
@@ -398,7 +399,8 @@ async function computeDailyCategory(dateFrom, dateTo) {
       CAST(COUNT(*) AS INTEGER) as total_items,
       CAST(SUM(CAST(sale AS DECIMAL(12,2))) AS DECIMAL(12,2)) as total_sale,
       CAST(SUM(CAST(profit AS DECIMAL(12,2))) AS DECIMAL(12,2)) as total_profit
-    FROM read_parquet('s3://${S3_BUCKET}/lemeng/retail_detail/{${dateFrom},${dateTo}}/*.parquet')
+    FROM read_parquet('s3://${S3_BUCKET}/lemeng/retail_detail/**/*.parquet',
+      hive_partitioning=true)
     WHERE biz_date BETWEEN '${dateFrom}' AND '${dateTo}'
       AND category IS NOT NULL AND category != ''
     GROUP BY biz_date, branch_num, category
@@ -442,7 +444,8 @@ async function computeWeeklyTrend(dateFrom, dateTo) {
       branch_num,
       MAX(branch_name) as branch_name,
       CAST(SUM(CAST(sale AS DECIMAL(12,2))) AS DECIMAL(12,2)) as total_sale
-    FROM read_parquet('s3://${S3_BUCKET}/lemeng/retail_detail/{${dateFrom},${dateTo}}/*.parquet')
+    FROM read_parquet('s3://${S3_BUCKET}/lemeng/retail_detail/**/*.parquet',
+      hive_partitioning=true)
     WHERE biz_date BETWEEN '${dateFrom}' AND '${dateTo}'
     GROUP BY DATE_TRUNC('week', biz_date), branch_num
     ORDER BY week_start, branch_num
