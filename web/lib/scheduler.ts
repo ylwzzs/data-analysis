@@ -11,14 +11,26 @@ import { notifyWecom } from './notify';
 const INSFORGE_API_BASE = process.env.INSFORGE_API_BASE!;
 const INSFORGE_API_KEY = process.env.INSFORGE_API_KEY!;
 
-// 存储已注册的 cron 任务
-const scheduledJobs: Map<string, ScheduledTask> = new Map();
+// 调度器状态：用 globalThis 持有，跨 chunk 单例。
+// Next.js 把 instrumentation.ts 与 route handler 打包进不同 chunk，各自有独立模块作用域，
+// 模块级变量不共享 → 会出现「两个 scheduler 实例」导致同一 cron 双触发、防重入锁也跨实例失效。
+// 统一挂到 globalThis（同进程同 V8 global）确保唯一实例。
+type SchedulerState = {
+  jobs: Map<string, ScheduledTask>;
+  running: Set<string>;
+  initialized: boolean;
+};
+const globalForScheduler = globalThis as unknown as { __schedulerState?: SchedulerState };
+const state: SchedulerState = (globalForScheduler.__schedulerState ??= {
+  jobs: new Map<string, ScheduledTask>(),
+  running: new Set<string>(),
+  initialized: false,
+});
 
-// 防重入：同一任务并发触发时跳过（5 分钟周期、单次约 30-60s，避免重叠）
-const runningTasks = new Set<string>();
-
-// 是否已初始化
-let initialized = false;
+// 引用共享状态：Map / Set 按引用共享，方法调用直接作用于全局实例；
+// initialized 为布尔值（按值），必须经 state.initialized 读写才能跨 chunk 同步。
+const scheduledJobs = state.jobs;
+const runningTasks = state.running;
 
 // 对账重试最大次数
 const MAX_VERIFY_RETRIES = 3;
@@ -27,7 +39,7 @@ const MAX_VERIFY_RETRIES = 3;
  * 初始化调度器：读取所有启用的任务，注册 cron（自动初始化）
  */
 export async function ensureSchedulerInitialized(): Promise<boolean> {
-  if (initialized) return true;
+  if (state.initialized) return true;
 
   console.log('[scheduler] 初始化定时采集调度器...');
 
@@ -47,7 +59,7 @@ export async function ensureSchedulerInitialized(): Promise<boolean> {
 
     if (!tasks || tasks.length === 0) {
       console.log('[scheduler] 无启用的采集任务');
-      initialized = true;
+      state.initialized = true;
       return true;
     }
 
@@ -57,7 +69,7 @@ export async function ensureSchedulerInitialized(): Promise<boolean> {
       registerTask(task);
     }
 
-    initialized = true;
+    state.initialized = true;
     console.log('[scheduler] 调度器初始化完成');
     return true;
   } catch (err: any) {
@@ -342,7 +354,7 @@ export async function reloadScheduler() {
   scheduledJobs.clear();
 
   // 重置初始化标记，重新初始化
-  initialized = false;
+  state.initialized = false;
   await ensureSchedulerInitialized();
 }
 
