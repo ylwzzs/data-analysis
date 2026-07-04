@@ -1,5 +1,6 @@
 // web/lib/collect-items.ts
 // 乐檬商品档案采集逻辑 - 直接使用 fetch 调用 PostgREST
+// 包含：去重、完整校验、分页全量采集
 
 import crypto from 'crypto';
 
@@ -113,7 +114,7 @@ async function callLemengApi(urlPath: string, authToken: string, bodyStr: string
 }
 
 // ===== 直接调用 PostgREST 的 upsert =====
-async function upsertToPostgREST(records: any[]): Promise<{ success: boolean; error?: string }> {
+async function upsertToPostgREST(records: any[]): Promise<{ success: boolean; upserted?: number; error?: string }> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json; charset=utf-8',
     'Prefer': 'resolution=merge-duplicates'
@@ -126,8 +127,6 @@ async function upsertToPostgREST(records: any[]): Promise<{ success: boolean; er
   }
 
   const url = `${POSTGREST_URL}/lemeng_items`;
-  const authMode = INSFORGE_ANON_KEY && INSFORGE_ANON_KEY.length > 20 ? 'with-auth' : 'no-auth';
-  console.log(`[collect-items] POST ${url} with ${records.length} records (${authMode})`);
 
   try {
     const response = await fetchWithTimeout(url, {
@@ -136,10 +135,8 @@ async function upsertToPostgREST(records: any[]): Promise<{ success: boolean; er
       body: JSON.stringify(records)
     }, 30000);
 
-    console.log(`[collect-items] Response status: ${response.status}`);
-
     if (response.status === 201 || response.status === 200) {
-      return { success: true };
+      return { success: true, upserted: records.length };
     }
 
     const errorText = await response.text();
@@ -151,10 +148,40 @@ async function upsertToPostgREST(records: any[]): Promise<{ success: boolean; er
   }
 }
 
+// ===== 查询数据库中的记录数（用于校验） =====
+async function getDbCount(): Promise<number> {
+  const headers: Record<string, string> = {};
+  if (INSFORGE_ANON_KEY && INSFORGE_ANON_KEY.length > 20) {
+    headers['Authorization'] = `Bearer ${INSFORGE_ANON_KEY}`;
+    headers['apikey'] = INSFORGE_ANON_KEY;
+  }
+
+  try {
+    const response = await fetchWithTimeout(
+      `${POSTGREST_URL}/lemeng_items?select=item_num&limit=0`,
+      { method: 'GET', headers },
+      10000
+    );
+
+    // PostgREST 返回 Content-Range: 0-16709/16710
+    const contentRange = response.headers.get('content-range');
+    if (contentRange) {
+      const total = contentRange.split('/')[1];
+      return parseInt(total, 10) || 0;
+    }
+    return 0;
+  } catch {
+    return 0;
+  }
+}
+
 // ===== 商品档案采集 =====
 export interface CollectItemsResult {
-  total: number;
-  collected: number;
+  total: number;          // API 返回的总数
+  collected: number;      // 成功 upsert 的记录数
+  deduped: number;        // 去重移除的记录数
+  dbCount: number;        // 写入后数据库中的总记录数
+  verified: boolean;      // 完整校验是否通过
   error: string;
 }
 
@@ -163,7 +190,7 @@ export async function collectItems(
   branchId: number = 28444,
   pageSize: number = 200
 ): Promise<CollectItemsResult> {
-  const result: CollectItemsResult = { total: 0, collected: 0, error: '' };
+  const result: CollectItemsResult = { total: 0, collected: 0, deduped: 0, dbCount: 0, verified: false, error: '' };
   const branchNumsStr = "99";
 
   // ===== 预热：激活 Token 会话 =====
@@ -190,23 +217,21 @@ export async function collectItems(
 
   const total = firstPageResult.data.result?.total_elements || 0;
   result.total = total;
-  console.log(`[collect-items] Total items: ${total}`);
+  console.log(`[collect-items] API total: ${total}`);
 
   if (total === 0) {
     return result;
   }
 
-  // ===== 收集所有记录 =====
+  // ===== 收集所有记录（全量分页） =====
   const allRecords: any[] = [];
   const firstRecords = firstPageResult.data.result?.content || [];
   allRecords.push(...firstRecords);
   console.log(`[collect-items] Page 1: ${firstRecords.length} items`);
 
-  // ===== 分页拉取 =====
   const totalPages = Math.ceil(total / pageSize);
-  const maxPages = Math.ceil(total / pageSize); // 采集全部，不限制页数
 
-  for (let page = 2; page <= totalPages && page <= maxPages; page++) {
+  for (let page = 2; page <= totalPages; page++) {
     const bodyStr = buildBody(branchId, page, pageSize);
     const pageResult = await callLemengApi(ENDPOINT_ITEM_LIST, authToken, bodyStr, branchNumsStr);
 
@@ -217,18 +242,42 @@ export async function collectItems(
 
     const records = pageResult.data.result?.content || [];
     allRecords.push(...records);
-    console.log(`[collect-items] Page ${page}/${totalPages}: ${records.length} items, total ${allRecords.length}`);
+    console.log(`[collect-items] Page ${page}/${totalPages}: ${records.length} items, accumulated ${allRecords.length}`);
 
     if (records.length < pageSize) break;
   }
 
-  // ===== 写入 PostgreSQL（直接调用 PostgREST） =====
-  if (allRecords.length > 0) {
+  console.log(`[collect-items] Fetched ${allRecords.length}/${total} items from API`);
+
+  // ===== 去重（以 item_num 为主键） =====
+  const seen = new Set<string>();
+  const dedupedRecords: any[] = [];
+  let dupCount = 0;
+
+  for (const item of allRecords) {
+    const key = item.item_num;
+    if (!key) continue;
+    if (seen.has(key)) {
+      dupCount++;
+      continue;
+    }
+    seen.add(key);
+    dedupedRecords.push(item);
+  }
+
+  result.deduped = dupCount;
+  if (dupCount > 0) {
+    console.log(`[collect-items] Deduped: removed ${dupCount} duplicates, ${dedupedRecords.length} unique items`);
+  }
+
+  // ===== 写入 PostgreSQL（批量 upsert） =====
+  if (dedupedRecords.length > 0) {
     const batchSize = 100;
     let successCount = 0;
+    let failCount = 0;
 
-    for (let i = 0; i < allRecords.length; i += batchSize) {
-      const batch = allRecords.slice(i, i + batchSize);
+    for (let i = 0; i < dedupedRecords.length; i += batchSize) {
+      const batch = dedupedRecords.slice(i, i + batchSize);
       const upsertRecords = batch.map(item => ({
         item_num: item.item_num,
         item_code: item.item_code,
@@ -246,6 +295,7 @@ export async function collectItems(
       const { success, error } = await upsertToPostgREST(upsertRecords);
 
       if (!success) {
+        failCount += batch.length;
         console.error(`[collect-items] Batch ${i}-${i + batchSize} upsert failed: ${error}`);
       } else {
         successCount += batch.length;
@@ -253,7 +303,21 @@ export async function collectItems(
     }
 
     result.collected = successCount;
-    console.log(`[collect-items] Upserted ${successCount} items to PostgreSQL`);
+    console.log(`[collect-items] Upserted ${successCount} items, failed ${failCount}`);
+  }
+
+  // ===== 完整校验：对比数据库记录数与 API 总数 =====
+  const dbCount = await getDbCount();
+  result.dbCount = dbCount;
+  result.verified = dbCount >= total;
+
+  if (result.verified) {
+    console.log(`[collect-items] ✅ 校验通过: DB ${dbCount} >= API ${total}`);
+  } else {
+    console.warn(`[collect-items] ⚠️ 校验未通过: DB ${dbCount} < API ${total} (缺少 ${total - dbCount} 条)`);
+    if (!result.error) {
+      result.error = `校验未通过: DB ${dbCount} < API ${total}`;
+    }
   }
 
   return result;

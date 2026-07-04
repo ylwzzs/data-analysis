@@ -6,8 +6,8 @@ import { createClient } from '@insforge/sdk';
 import { collectItems } from '@/lib/collect-items';
 import { ensureSchedulerInitialized } from '@/lib/scheduler';
 
-const INSFORGE_API_BASE = process.env.INSFORGE_API_BASE!;
-const INSFORGE_API_KEY = process.env.INSFORGE_API_KEY!;
+const INSFORGE_URL = process.env.NEXT_PUBLIC_INSFORGE_URL || 'http://insforge:7130';
+const INSFORGE_ANON_KEY = process.env.NEXT_PUBLIC_INSFORGE_ANON_KEY || '';
 
 // ===== 主流程 =====
 export async function POST(req: NextRequest) {
@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { task_id } = body;
 
-    const client = createClient({ baseUrl: INSFORGE_API_BASE, anonKey: INSFORGE_API_KEY });
+    const client = createClient({ baseUrl: INSFORGE_URL, anonKey: INSFORGE_ANON_KEY });
 
     // 获取任务信息
     const { data: task } = await client.database
@@ -85,9 +85,12 @@ export async function POST(req: NextRequest) {
     );
 
     return NextResponse.json({
-      success: !result.error,
+      success: !result.error && result.verified,
       total: result.total,
       collected: result.collected,
+      deduped: result.deduped,
+      dbCount: result.dbCount,
+      verified: result.verified,
       error: result.error || undefined
     });
 
@@ -96,7 +99,7 @@ export async function POST(req: NextRequest) {
     const finishedAt = new Date();
 
     try {
-      const client = createClient({ baseUrl: INSFORGE_API_BASE, anonKey: INSFORGE_API_KEY });
+      const client = createClient({ baseUrl: INSFORGE_URL, anonKey: INSFORGE_ANON_KEY });
       const body = await req.json();
       await writeLog(client, body.task_id, startedAt, finishedAt, 'failed', 0, error.message);
     } catch { /* ignore */ }

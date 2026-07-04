@@ -152,7 +152,7 @@ async function executeTask(task: {
         .update({ last_run_at: finishedAt.toISOString() })
         .eq('id', task.id);
 
-      const finalStatus = result.error ? 'failed' : 'success';
+      const finalStatus = result.error ? 'failed' : (result.verified ? 'success' : 'partial');
       await writeLog(
         client,
         task.id,
@@ -160,10 +160,11 @@ async function executeTask(task: {
         finishedAt,
         finalStatus,
         result.collected,
-        result.error || undefined
+        result.error || undefined,
+        { total: result.total, deduped: result.deduped, dbCount: result.dbCount, verified: result.verified }
       );
 
-      console.log(`[scheduler] 商品档案采集完成: ${result.collected}/${result.total} 条 ${result.error ? '❌' : '✅'}`);
+      console.log(`[scheduler] 商品档案采集完成: ${result.collected}/${result.total} 条, DB ${result.dbCount}, 校验 ${result.verified ? '✅' : '❌'}`);
       return;
     }
 
