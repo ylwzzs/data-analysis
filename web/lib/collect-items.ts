@@ -1,18 +1,21 @@
 // web/lib/collect-items.ts
-// 乐檬商品档案采集逻辑
+// 乐檬商品档案采集逻辑 - 直接使用 fetch 调用 PostgREST
 
 import crypto from 'crypto';
-import { createClient } from '@insforge/sdk';
 
 const BASE_URL = "https://sharef.lemengcloud.com";
 const ENDPOINT_ITEM_LIST = "/earth-gateway/amazon-base/nhsoft.base.business.item.page.new";
 
 const REQUEST_TIMEOUT = 30000;
 const LEMENG_SECRET_KEY = process.env.LEMENG_SECRET_KEY || '';
-const INSFORGE_API_BASE = process.env.INSFORGE_API_BASE!;
-const INSFORGE_API_KEY = process.env.INSFORGE_API_KEY!;
 
-// ===== 签名算法（与 collect.ts 相同） =====
+// PostgREST 直接访问配置
+const POSTGREST_URL = process.env.POSTGREST_URL || 'http://postgrest:3000';
+// 优先使用 INSFORGE_API_KEY（已在 docker-compose.prod.yml 中配置）
+// 兼容 NEXT_PUBLIC_INSFORGE_ANON_KEY（前端用）
+const INSFORGE_ANON_KEY = process.env.INSFORGE_API_KEY || process.env.NEXT_PUBLIC_INSFORGE_ANON_KEY || '';
+
+// ===== 签名算法 =====
 function generateSignature(authToken: string, timestamp: string, nonce: string, branchNums: string, scopeIds: string, urlPath: string, bodyStr: string, secretKey: string): string {
   const signStr = authToken + timestamp + nonce + branchNums + scopeIds + secretKey + urlPath + bodyStr + secretKey;
   return crypto.createHash('sha256').update(signStr, 'utf8').digest('hex');
@@ -109,6 +112,45 @@ async function callLemengApi(urlPath: string, authToken: string, bodyStr: string
   return { ok: false, error: "Max retries exceeded" };
 }
 
+// ===== 直接调用 PostgREST 的 upsert =====
+async function upsertToPostgREST(records: any[]): Promise<{ success: boolean; error?: string }> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Prefer': 'resolution=merge-duplicates'
+  };
+
+  // 仅在有有效 JWT 时添加 auth header（RLS 未启用时也可无 auth 访问）
+  if (INSFORGE_ANON_KEY && INSFORGE_ANON_KEY.length > 20) {
+    headers['Authorization'] = `Bearer ${INSFORGE_ANON_KEY}`;
+    headers['apikey'] = INSFORGE_ANON_KEY;
+  }
+
+  const url = `${POSTGREST_URL}/lemeng_items`;
+  const authMode = INSFORGE_ANON_KEY && INSFORGE_ANON_KEY.length > 20 ? 'with-auth' : 'no-auth';
+  console.log(`[collect-items] POST ${url} with ${records.length} records (${authMode})`);
+
+  try {
+    const response = await fetchWithTimeout(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(records)
+    }, 30000);
+
+    console.log(`[collect-items] Response status: ${response.status}`);
+
+    if (response.status === 201 || response.status === 200) {
+      return { success: true };
+    }
+
+    const errorText = await response.text();
+    console.error(`[collect-items] Error response (${response.status}): ${errorText.slice(0, 500)}`);
+    return { success: false, error: `PostgREST ${response.status}: ${errorText.slice(0, 200)}` };
+  } catch (err: any) {
+    console.error(`[collect-items] Fetch error:`, err.message);
+    return { success: false, error: err.message };
+  }
+}
+
 // ===== 商品档案采集 =====
 export interface CollectItemsResult {
   total: number;
@@ -162,7 +204,7 @@ export async function collectItems(
 
   // ===== 分页拉取 =====
   const totalPages = Math.ceil(total / pageSize);
-  const maxPages = 50; // 商品档案最多 50 页
+  const maxPages = 50;
 
   for (let page = 2; page <= totalPages && page <= maxPages; page++) {
     const bodyStr = buildBody(branchId, page, pageSize);
@@ -180,12 +222,11 @@ export async function collectItems(
     if (records.length < pageSize) break;
   }
 
-  // ===== 写入 PostgreSQL =====
+  // ===== 写入 PostgreSQL（直接调用 PostgREST） =====
   if (allRecords.length > 0) {
-    const client = createClient({ baseUrl: INSFORGE_API_BASE, anonKey: INSFORGE_API_KEY });
-
-    // 批量 upsert
     const batchSize = 100;
+    let successCount = 0;
+
     for (let i = 0; i < allRecords.length; i += batchSize) {
       const batch = allRecords.slice(i, i + batchSize);
       const upsertRecords = batch.map(item => ({
@@ -202,17 +243,17 @@ export async function collectItems(
         branch_id: item.branch_id || branchId,
       }));
 
-      const { error: upsertError } = await client.database
-        .from('lemeng_items')
-        .upsert(upsertRecords, { onConflict: 'item_num' });
+      const { success, error } = await upsertToPostgREST(upsertRecords);
 
-      if (upsertError) {
-        console.error(`[collect-items] Batch ${i}-${i + batchSize} upsert error:`, upsertError);
+      if (!success) {
+        console.error(`[collect-items] Batch ${i}-${i + batchSize} upsert failed: ${error}`);
+      } else {
+        successCount += batch.length;
       }
     }
 
-    result.collected = allRecords.length;
-    console.log(`[collect-items] Upserted ${result.collected} items to PostgreSQL`);
+    result.collected = successCount;
+    console.log(`[collect-items] Upserted ${successCount} items to PostgreSQL`);
   }
 
   return result;
