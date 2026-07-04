@@ -61,8 +61,8 @@ deploy_one() {
     fi
   fi
   echo "  ✅ $slug"
-  # 每个 function 更新后等待 1 秒，避免触发 API 速率限制（429）
-  sleep 1
+  # 每个 function 更新后等待 3 秒，避免触发 API 速率限制（429）
+  sleep 3
 }
 
 # 部署除 mcp 外的所有 function（mcp 为占位 mock，且 ESM 写法与 OSS CommonJS runtime 冲突）
