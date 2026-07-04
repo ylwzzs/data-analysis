@@ -4,7 +4,7 @@
 
 import cron, { ScheduledTask } from 'node-cron';
 import { createClient } from '@insforge/sdk';
-import { collectOnce, getYesterdayChina, getTodayChina, ALL_BRANCH_NUMS, CollectResult } from './collect';
+import { collectOnce, getYesterdayChina, getTodayChina, CollectResult } from './collect';
 import { collectItems, CollectItemsResult } from './collect-items';
 import { notifyWecom } from './notify';
 
@@ -196,7 +196,7 @@ async function executeTask(task: {
     const dates = params.date_mode === 'today'
       ? [today, today]
       : (params.dates || [getYesterdayChina(), getYesterdayChina()]);
-    const branchNums = params.branch_nums || ALL_BRANCH_NUMS;
+    const branchNums = params.branch_nums || [];
     const branchNumsStr = branchNums.join(',');
     const pageSize = params.page_size || 200;
 

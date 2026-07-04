@@ -1,160 +1,31 @@
-# 乐檬 Token 提取书签
+# 乐檬 Token 提取书签（抓"正在使用"的活 token）
 
-## 使用方法
+旧版从 localStorage 按 exp 最大挑 token，会抓到残留的失效旧 token（30 天有效期的死 token 长期占着 exp 最大位）。本版改为**拦截页面实际发出的请求**，从 `Authorization` 头里取 app 此刻真正在用的 token —— 一定是活的。
 
-### 步骤 1：添加书签
+## 书签代码（一整行）
 
-1. 在浏览器中右键书签栏 → 添加新书签
-2. 名称填写：`提取乐檬Token`
-3. URL/地址粘贴以下代码（完整复制）：
+复制下面代码框整段，粘到书签的"网址"字段：
 
 ```
-javascript:(function(){let t=null;const l=['token','access_token','auth_token','accessToken','jwt','jwt_token','lemeng_token','user_token'];for(const k of l){const v=localStorage.getItem(k);if(v&&v.startsWith('eyJ')){t=v;console.log('找到token在localStorage.'+k);break}}if(!t){for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);const v=localStorage.getItem(k);if(v&&v.includes('eyJ')){try{const p=JSON.parse(v);const f=['token','access_token','accessToken','auth_token'];for(const f1 of f){if(p[f1]&&p[f1].startsWith('eyJ')){t=p[f1];console.log('找到token在localStorage.'+k+'.'+f1);break}}}catch(e){if(v.startsWith('eyJ')){t=v;console.log('找到token在localStorage.'+k);break}}}}}if(!t){const c=document.cookie.split(';');for(const ck of c){const[n,v]=ck.trim().split('=');if(v&&v.startsWith('eyJ')){t=v;console.log('找到token在Cookie.'+n);break}}}if(!t){for(let i=0;i<sessionStorage.length;i++){const k=sessionStorage.key(i);const v=sessionStorage.getItem(k);if(v&&v.startsWith('eyJ')){t=v;console.log('找到token在sessionStorage.'+k);break}}}if(t){try{const p=JSON.parse(atob(t.split('.')[1]));const d=new Date(p.exp*1000);const n=new Date();const dl=Math.ceil((d-n)/(86400000));navigator.clipboard.writeText(t).then(()=>{alert('✅ 乐檬Token已复制！\n\n有效期：'+dl+'天后过期（'+d.toLocaleDateString()+'）\n用户：'+(p.user_name||p.phone)+'\n\n请回到数据分析平台粘贴使用。')}).catch(()=>{prompt('✅ 找到乐檬Token！\n\n有效期：'+dl+'天后过期\n用户：'+(p.user_name||p.phone)+'\n\n请手动复制：',t)})}catch(e){navigator.clipboard.writeText(t).then(()=>{alert('✅ 乐檬Token已复制到剪贴板！\n\n请回到数据分析平台粘贴使用。')}).catch(()=>{prompt('✅ 找到乐檬Token！\n\n请手动复制：',t)})}}else{alert('❌ 未找到乐檬Token\n\n可能原因：\n1. 您还未登录乐檬系统\n2. 请确保当前页面是乐檬后台页面\n\n请先登录乐檬系统，然后重试。')} })();
+javascript:(function(){'use strict';function decode(tok){try{var raw=tok.indexOf(' ')>=0?tok.split(' ').pop():tok;var parts=raw.split('.');if(parts.length<2)return null;var p=parts[1].replace(/-/g,'+').replace(/_/g,'/');while(p.length%4)p+='=';return JSON.parse(atob(p));}catch(e){return null;}}function extractAuth(h){if(!h)return null;try{if(typeof h.get==='function')return h.get('Authorization')||h.get('authorization');if(Array.isArray(h)){for(var i=0;i<h.length;i++){var x=h[i]||[];if(String(x[0]).toLowerCase()==='authorization')return x[1];}}for(var k in h){if(Object.prototype.hasOwnProperty.call(h,k)&&k.toLowerCase()==='authorization')return h[k];}}catch(e){}return null;}function showToken(){var tok=window.__lmLiveToken;if(!tok)return false;var c=decode(tok)||{};var jti=c.jti?String(c.jti).slice(0,8):'?';var msg='已捕获【app 正在使用】的活 token（来自实际请求）\n\n品牌 company_id：'+(c.company_id||'?')+'\njti：'+jti+'…\n用户：'+(c.user_name||c.phone||'-')+'\n来源：'+String(window.__lmLiveUrl||'').slice(0,70)+'\n\n已复制到剪贴板，请粘贴给小助手。';try{navigator.clipboard.writeText(tok).then(function(){alert(msg);},function(){prompt(msg+'\n（自动复制失败，手动复制：）',tok);});}catch(e){prompt(msg+'\n（手动复制：）',tok);}return true;}function capture(tok,url){if(!tok||window.__lmLiveToken)return;window.__lmLiveToken=tok;window.__lmLiveUrl=url||'';setTimeout(showToken,0);}if(!window.__lmHooked){window.__lmHooked=true;var origFetch=window.fetch;if(origFetch){window.fetch=function(input,init){try{var url=typeof input==='string'?input:(input&&input.url)||'';var a=extractAuth((init&&init.headers)||(input&&input.headers));if(a&&url.indexOf('earth-gateway')>=0)capture(a,url);}catch(e){}return origFetch.apply(this,arguments);};}var XS=XMLHttpRequest.prototype;var osh=XS.setRequestHeader;XS.setRequestHeader=function(name,value){try{if(name&&String(name).toLowerCase()==='authorization')this.__lmA=value;}catch(e){}return osh.apply(this,arguments);};var osd=XS.send;XS.send=function(){try{if(this.__lmA)capture(this.__lmA,'');}catch(e){}return osd.apply(this,arguments);};}if(!showToken()){alert('已开启请求监听（仅当前标签页有效）。\n\n现在请在乐檬页面上点一下菜单/切换页面触发一条请求；\napp 实际使用的活 token 会被自动捕获并弹出，并复制到剪贴板。\n\n请勿整页刷新（会清除监听），用 SPA 内的点击即可。');}})();
 ```
 
-### 步骤 2：登录乐檬系统
+## 使用步骤
 
-访问 https://account.lemengcloud.com/ 并登录
+1. 在乐檬前台**切到要提取的品牌**（如 64188），停在后台页面
+2. 点书签 → 弹出"已开启请求监听"
+3. **在页面上点一下菜单 / 切换页面**（触发一条请求；**不要整页刷新**，否则监听失效要重点书签）
+4. 捕获到后自动弹框，显示 `品牌 company_id` + `jti`（前 8 位），并把活 token 复制到剪贴板
+5. 粘贴给小助手
 
-### 步骤 3：提取 Token
+> 判别是否拿到新 token：看弹框里的 **jti**。死掉的 64188 token 是 `3527f7a2…`，活的一定是别的值。
 
-1. 确保停留在乐檬管理后台页面
-2. 点击刚才添加的书签"提取乐檬Token"
-3. Token 自动复制到剪贴板
-4. 回到数据分析平台粘贴
+## 原理
 
-## 常见问题
+- 挂钩 `window.fetch` 与 `XMLHttpRequest.setRequestHeader/send`，拦截发往 `earth-gateway` 的请求，读其 `Authorization` 头。
+- 只记第一次捕获到的，立即解码 payload 取 `company_id`/`jti` 显示，并复制原 token。
+- 监听器只存在于当前标签页内存，整页刷新即失效（再次点击书签可重新开启）。
 
-### Q: 提示"未找到乐檬 Token"？
+## Token 有效期
 
-确保：
-1. 已在乐檬系统中登录
-2. 当前页面 URL 是 `*.lemengcloud.com` 或 `*.lemeng.center`
-3. 不要在微信扫码登录页点击（要等登录成功后）
-
-### Q: Token 有效期多久？
-
-约 5 天，过期需重新提取
-
-### Q: 添加书签失败？
-
-Chrome 浏览器：
-1. Ctrl/Cmd + Shift + B 显示书签栏
-2. 右键书签栏 → 添加书签
-3. 粘贴名称和 URL
-
-其他浏览器类似操作。
-
----
-
-**完整代码（开发参考）：**
-
-```javascript
-(function() {
-  'use strict';
-
-  let token = null;
-
-  // 方法1：从 localStorage 常见键名提取
-  const localStorageKeys = [
-    'token', 'access_token', 'auth_token', 'accessToken',
-    'jwt', 'jwt_token', 'lemeng_token', 'user_token'
-  ];
-
-  for (const key of localStorageKeys) {
-    const value = localStorage.getItem(key);
-    if (value && value.startsWith('eyJ')) {
-      token = value;
-      console.log(`找到 token 在 localStorage.${key}`);
-      break;
-    }
-  }
-
-  // 方法2：遍历所有 localStorage
-  if (!token) {
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      const value = localStorage.getItem(key);
-      if (value && value.includes('eyJ')) {
-        try {
-          const parsed = JSON.parse(value);
-          const tokenFields = ['token', 'access_token', 'accessToken', 'auth_token'];
-          for (const field of tokenFields) {
-            if (parsed[field] && parsed[field].startsWith('eyJ')) {
-              token = parsed[field];
-              console.log(`找到 token 在 localStorage.${key}.${field}`);
-              break;
-            }
-          }
-        } catch (e) {
-          if (value.startsWith('eyJ')) {
-            token = value;
-            console.log(`找到 token 在 localStorage.${key}`);
-            break;
-          }
-        }
-      }
-    }
-  }
-
-  // 方法3：从 Cookie 提取
-  if (!token) {
-    const cookies = document.cookie.split(';');
-    for (const cookie of cookies) {
-      const [name, value] = cookie.trim().split('=');
-      if (value && value.startsWith('eyJ')) {
-        token = value;
-        console.log(`找到 token 在 Cookie.${name}`);
-        break;
-      }
-    }
-  }
-
-  // 方法4：从 sessionStorage 提取
-  if (!token) {
-    for (let i = 0; i < sessionStorage.length; i++) {
-      const key = sessionStorage.key(i);
-      const value = sessionStorage.getItem(key);
-      if (value && value.startsWith('eyJ')) {
-        token = value;
-        console.log(`找到 token 在 sessionStorage.${key}`);
-        break;
-      }
-    }
-  }
-
-  // 结果处理
-  if (token) {
-    try {
-      const payload = JSON.parse(atob(token.split('.')[1]));
-      const expDate = new Date(payload.exp * 1000);
-      const now = new Date();
-      const daysLeft = Math.ceil((expDate - now) / (1000 * 60 * 60 * 24));
-
-      navigator.clipboard.writeText(token).then(() => {
-        alert(`✅ 乐檬 Token 已复制！
-
-有效期：${daysLeft} 天后过期（${expDate.toLocaleDateString()}）
-用户：${payload.user_name || payload.phone}
-
-请回到数据分析平台粘贴使用。`);
-      }).catch(() => {
-        prompt(`✅ 找到乐檬 Token！
-
-有效期：${daysLeft} 天后过期
-用户：${payload.user_name || payload.phone}
-
-请手动复制下方 Token：`, token);
-      });
-    } catch (e) {
-      navigator.clipboard.writeText(token).then(() => {
-        alert('✅ 乐檬 Token 已复制到剪贴板！\n\n请回到数据分析平台粘贴使用。');
-      }).catch(() => {
-        prompt('✅ 找到乐檬 Token！\n\n请手动复制：', token);
-      });
-    }
-  } else {
-    alert('❌ 未找到乐檬 Token\n\n可能原因：\n1. 您还未登录乐檬系统\n2. 请确保当前页面是乐檬后台页面\n\n请先登录乐檬系统，然后重试。');
-  }
-})();
-```
+约 5 天（普通）/ 30 天（ADMIN），过期需重新提取。

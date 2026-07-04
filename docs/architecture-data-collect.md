@@ -50,16 +50,23 @@ DuckDB 服务承担三个角色：
 
 ```
 数据源（data_sources）          ← 持有鉴权：token / appid+secret（按 auth_type）
-├── 乐檬（auth_type=bearer，单条 auth_credentials.token，5 天有效）
-│   ├── 采集任务：商品档案采集   ← 共用上层的 token
-│   └── 采集任务：销售订单明细采集 ← 共用上层的 token
+│   粒度 = (外部系统, 品牌)。乐檬一个账号可管多个品牌(company)，
+│   但 token 按 company 隔离：JWT payload 的 company_id 即品牌，登录不同品牌拿到不同 token。
+│   多品牌 token 可同时有效（已实测：切换品牌不互顶）。
+├── 乐檬-3120（auth_type=bearer，token 的 company_id=3120，~5 天有效）
+│   ├── 采集任务：商品档案采集     ← 共用上层 token
+│   └── 采集任务：销售订单明细采集 ← 共用上层 token
+├── 乐檬-64188（auth_type=bearer，token 的 company_id=64188）
+│   └── 采集任务：销售订单明细采集 ← 共用上层 token
 └── 金蝶（未来，auth_type=kingdee，credential_data 存 appid/secret）
-    └── 采集任务：…              ← 共用上层鉴权
+    └── 采集任务：…                ← 共用上层鉴权
 ```
 
-- **鉴权归属数据源**：一个外部系统 = 一个数据源，其下所有采集任务共用该源的唯一鉴权。
+- **鉴权归属数据源**：一个(系统,品牌)组合 = 一个数据源，其下所有采集任务共用该源的唯一 token。
   杜绝「同系统拆多源、各存一份 token」导致的一活一死。
-- **scheduler 读凭证**：按 `collect_tasks.source_id` 取 `auth_credentials`，同源任务自然共用，无需额外覆盖字段。
+- **品牌由 token 决定，非请求参数**：乐檬 API 的品牌(company)写在 JWT 的 `company_id` claim 里，签名 `scopeIds` 与品牌无关（恒为空）。换品牌 = 换 token（重新登录），不是加请求参数。
+- **branch_nums 传空 = 该品牌全部门店**：`branch_nums:[]` 返回当前 token(company) 维度的全量（实测 3120=13118、64188=8134/天）。无需为每个品牌枚举门店号。
+- **scheduler 读凭证**：按 `collect_tasks.source_id` 取 `auth_credentials`，同源任务自然共用。
 - **扩展约定**：新增源类型（金蝶等）时，scheduler 按 `data_source.auth_type` 分派鉴权方式（当前仅 bearer/token）。
 
 ## 数据流架构
@@ -112,15 +119,18 @@ DuckDB 服务承担三个角色：
 ```
 天翼云 OOS
 └── Bucket: lemeng-datasource
-    └── lemeng/retail_detail/{date}/
-        ├── all.parquet              → 当日全部明细
-        ├── branch_num_1.parquet     → 门店1明细
-        ├── branch_num_2.parquet     → 门店2明细
-        └── ...                      → 按门店分片
+    └── lemeng/retail_detail/{company_id}/{date}/   ← company_id 从 token payload 解出，按品牌分区
+        ├── all.parquet              → 该品牌当日全部明细
+        ├── branch_num_N.parquet     → 按门店分片
+        └── ...
 
-数据量：每天几万条，保留 60+ 天
+数据量：每天几万条（按品牌独立计），保留 60+ 天
 格式：Parquet + zstd 压缩
 用途：归档 + DuckDB 计算 + 个性化查询
+说明：按 company_id 分区，使各品牌采集任务各写各的文件（杜绝跨品牌 /merge 写竞争、
+      order_no 跨品牌歧义）；跨品牌查询用 glob：read_parquet('.../retail_detail/*/{date}/all.parquet')。
+      历史数据（2026-07-04 的 3120）曾写在无 company_id 的旧路径 lemeng/retail_detail/{date}/，
+      迁移到新路径或由下次全量核对重写覆盖。
 ```
 
 ## PostgreSQL 存储（热数据）
@@ -249,6 +259,11 @@ OpenClaw SQL → DuckDB /query → 鉴权 → read_parquet → 返回结果
 | 报表查询 | PostgreSQL + PostgREST |
 | PostgreSQL 鉴权 | RLS + 部门 ID |
 | 鉴权归属 | 数据源层（同源任务共用一 token），非任务层 |
+| 数据源粒度 | (外部系统, 品牌)。乐檬每品牌一个数据源，各持自己的 token |
+| 品牌(company)归属 | 由 token 的 JWT `company_id` 决定，非请求参数；换品牌=换 token |
+| 多品牌 token 共存 | ✅ 已实测：切换品牌不互顶，两品牌 token 可同时有效 |
+| branch_nums 取值 | 传空 `[]` = 该品牌(company)全部门店，无需枚举 |
+| OOS 存储 | 按品牌分区：`lemeng/retail_detail/{company_id}/{date}/` |
 | 零售明细采集模式 | 当天数据、8-24 点每 5 分钟增量 + 每小时全量核对 |
 
 ## 待讨论/待实现

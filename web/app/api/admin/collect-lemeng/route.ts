@@ -3,7 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@insforge/sdk';
-import { collectOnce, getYesterdayChina, getTodayChina, ALL_BRANCH_NUMS, LEMENG_SECRET_KEY, CollectResult } from '@/lib/collect';
+import { collectOnce, getYesterdayChina, getTodayChina, LEMENG_SECRET_KEY, CollectResult } from '@/lib/collect';
 import { notifyWecom } from '@/lib/notify';
 import { ensureSchedulerInitialized } from '@/lib/scheduler';
 
@@ -65,7 +65,7 @@ export async function POST(req: NextRequest) {
     const dates = params.date_mode === 'today'
       ? [getTodayChina(), getTodayChina()]
       : (params.dates || [getYesterdayChina(), getYesterdayChina()]);
-    const branchNums = params.branch_nums || ALL_BRANCH_NUMS;
+    const branchNums = params.branch_nums || [];
     const pageSize = params.page_size || 200;
 
     console.log(`[collect-lemeng] 手动触发: task=${task.name}, dates=${dates[0]}, branches=${branchNums.length}`);
