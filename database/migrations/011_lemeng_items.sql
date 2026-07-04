@@ -2,16 +2,16 @@
 -- 乐檬商品档案表（商品基础信息）
 
 CREATE TABLE IF NOT EXISTS lemeng_items (
-    item_num VARCHAR(50) PRIMARY KEY,           -- 商品编号（主键）
-    item_code VARCHAR(50),                       -- 商品编码
-    item_name VARCHAR(200),                      -- 商品名称
-    item_category VARCHAR(100),                  -- 商品类别
-    item_spec VARCHAR(100),                      -- 规格
-    item_unit VARCHAR(20),                       -- 单位
-    department VARCHAR(100),                     -- 所属部门
+    item_num TEXT PRIMARY KEY,                   -- 商品编号（主键）- TEXT 无长度限制
+    item_code TEXT,                              -- 商品编码
+    item_name TEXT,                              -- 商品名称
+    item_category TEXT,                          -- 商品类别
+    item_spec TEXT,                              -- 规格
+    item_unit TEXT,                              -- 单位
+    department TEXT,                             -- 所属部门
     item_regular_price DECIMAL(10,2),            -- 标准售价
     item_cost_price DECIMAL(10,2),               -- 成本价
-    item_status VARCHAR(20),                     -- 商品状态
+    item_status TEXT,                            -- 商品状态
     branch_id INTEGER,                           -- 门店ID
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
