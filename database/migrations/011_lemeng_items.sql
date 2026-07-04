@@ -27,7 +27,8 @@ COMMENT ON TABLE lemeng_items IS '乐檬商品档案（从 nhsoft.base.business.
 -- 权限
 GRANT SELECT ON lemeng_items TO authenticated;
 
--- 更新触发器
+-- 更新触发器（幂等：先删后建）
+DROP TRIGGER IF EXISTS update_lemeng_items_updated_at ON lemeng_items;
 CREATE TRIGGER update_lemeng_items_updated_at
     BEFORE UPDATE ON lemeng_items
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
