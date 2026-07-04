@@ -41,6 +41,28 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
+    # ---------- 前端管理 API（Next.js Route Handlers）----------
+    # 必须放在 /api 之前：nginx 最长前缀匹配优先，/api/admin/* 与 /api/auth/* 命中此块转给 web，
+    # 其余 /api 仍走 InsForge。否则被 /api → insforge 遮蔽，管理后台返回 Cannot POST / 404。
+    # proxy_pass 不带路径 → 保留完整原始 URI 传给 Next.js。
+    location /api/admin {
+        proxy_pass http://web:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /api/auth {
+        proxy_pass http://web:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
     # ---------- InsForge API ----------
     location /api {
         proxy_pass http://insforge:7130;

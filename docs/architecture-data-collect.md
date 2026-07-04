@@ -168,7 +168,9 @@ Next.js web 容器
 └── lib/scheduler.ts
     ├── node-cron 注册任务
     ├── timezone: Asia/Shanghai
-    ├── 首次 API 调用时初始化
+    ├── server 启动时自初始化（web/instrumentation.ts 的 register() 调 ensureSchedulerInitialized，
+    │   带退避重试；web 容器重启后 cron 不再静默停止）
+    ├── 首次 /api/admin 调用兜底初始化（仍保留）
     └── 端点：GET/POST /api/admin/scheduler/reload
 
 任务配置：

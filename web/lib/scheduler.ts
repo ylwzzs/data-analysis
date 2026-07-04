@@ -26,8 +26,8 @@ const MAX_VERIFY_RETRIES = 3;
 /**
  * 初始化调度器：读取所有启用的任务，注册 cron（自动初始化）
  */
-export async function ensureSchedulerInitialized() {
-  if (initialized) return;
+export async function ensureSchedulerInitialized(): Promise<boolean> {
+  if (initialized) return true;
 
   console.log('[scheduler] 初始化定时采集调度器...');
 
@@ -42,13 +42,13 @@ export async function ensureSchedulerInitialized() {
 
     if (error) {
       console.error('[scheduler] 查询任务失败:', error);
-      return;
+      return false;
     }
 
     if (!tasks || tasks.length === 0) {
       console.log('[scheduler] 无启用的采集任务');
       initialized = true;
-      return;
+      return true;
     }
 
     console.log(`[scheduler] 发现 ${tasks.length} 个启用的任务`);
@@ -59,8 +59,10 @@ export async function ensureSchedulerInitialized() {
 
     initialized = true;
     console.log('[scheduler] 调度器初始化完成');
+    return true;
   } catch (err: any) {
     console.error('[scheduler] 初始化异常:', err.message);
+    return false;
   }
 }
 
