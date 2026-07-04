@@ -35,12 +35,12 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: web/package-lock.json
 
       - name: Install dependencies
-        run: cd web && npm ci
+        run: cd web && npm install
 
       - name: Lint (warnings allowed)
         run: cd web && npm run lint || echo "::warning::Lint has issues - check logs"
