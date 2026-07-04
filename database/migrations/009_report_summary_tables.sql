@@ -63,6 +63,11 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
+-- 更新触发器（幂等：先删后建）
+DROP TRIGGER IF EXISTS update_report_daily_sales_updated_at ON report_daily_sales;
+DROP TRIGGER IF EXISTS update_report_daily_category_updated_at ON report_daily_category;
+DROP TRIGGER IF EXISTS update_report_weekly_trend_updated_at ON report_weekly_trend;
+
 CREATE TRIGGER update_report_daily_sales_updated_at
     BEFORE UPDATE ON report_daily_sales
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
