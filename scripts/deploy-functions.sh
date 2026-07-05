@@ -81,27 +81,38 @@ if [ "$failed_count" -gt 0 ]; then
   echo "⚠ ${failed_count} 个 function 部署失败（function 可用 MCP 单独更新，不阻断前端部署）"
 fi
 
-# 注入 function secrets（WECOM_*）
-echo "▶ 注入 function secrets（WECOM_*）..."
+# 注入 function secrets（WECOM_* 等）。set_secret 为幂等 upsert：
+# POST 新建，已存在（409）则 PUT 覆盖。每次部署都用当前 ENCRYPTION_KEY 把全部 secret
+# 重加密一遍 —— 即便历史 key 漂移过、老密文已成孤儿，下次部署自动治愈。
+# （根因：secret 解密失败时 deno 运行时会注入空串并覆盖容器 env，把 function 搞崩；
+#  保证密文始终可解比"存在则跳过"更安全。）
+echo "▶ 注入 function secrets（upsert，用当前 key 重加密）..."
 set_secret() {
   local k="$1" v="$2"
   if [ -z "$v" ]; then
     echo "  · $k 未配置，跳过"
     return
   fi
-  # 已存在则跳过（POST 仅新建，重复会失败；如需改值请在 dashboard 删除后重跑）
-  if curl -sf -H "$AUTH" "$API_URL/api/secrets" 2>/dev/null | \
-     jq -e --arg k "$k" '.secrets[]? | select(.key==$k)' >/dev/null 2>&1; then
-    echo "  · $k 已存在，跳过"
-    return
-  fi
   local body; body=$(jq -n --arg k "$k" --arg v "$v" '{key:$k, value:$v}')
-  if curl -sf -X POST -H "$AUTH" -H "Content-Type: application/json" \
-    -d "$body" "$API_URL/api/secrets" >/dev/null; then
-    echo "  ✅ $k"
-  else
-    echo "  ⚠ $k 设置失败（端点/格式可能不符，请核对 /api/secrets）"
-  fi
+  local code
+  code=$(curl -s -o /tmp/insforge_secret_resp -w "%{http_code}" -X POST \
+    -H "$AUTH" -H "Content-Type: application/json" \
+    -d "$body" "$API_URL/api/secrets")
+  case "$code" in
+    200|201) echo "  ✅ $k（新建）"; return ;;
+    409)
+      # 已存在 → PUT 覆盖（用当前 key 重新加密）
+      code=$(curl -s -o /dev/null -w "%{http_code}" -X PUT \
+        -H "$AUTH" -H "Content-Type: application/json" \
+        -d "$body" "$API_URL/api/secrets/$k")
+      if [ "$code" = "200" ]; then
+        echo "  ✅ $k（PUT 覆盖，重新加密）"
+      else
+        echo "  ⚠ $k PUT 失败 http=$code"
+      fi
+      return ;;
+    *) echo "  ⚠ $k POST 失败 http=$code: $(head -c 150 /tmp/insforge_secret_resp 2>/dev/null)"; return ;;
+  esac
 }
 set_secret "WECOM_CORP_ID" "${WECOM_CORP_ID:-}"
 set_secret "WECOM_SECRET" "${WECOM_SECRET:-}"
