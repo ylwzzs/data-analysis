@@ -330,10 +330,10 @@ POST /collect_logs            → 写入采集日志
    ↓
 OpenClaw（企微 channel 已接通 + DeepSeek-V4-Flash）
    ├─ skill：明细视图 schema + 汇总表清单 + DuckDB 语法 + 书写规范（"查 retail_detail 视图，不 read_parquet"）
-   └─ tool query_data：POST 网关 {sql, userId}
+   └─ tool query_retail_data（详见 §4.3）：POST 网关 {sql, userId=toolContext.requesterSenderId, agent_api_key}
    ↓
 agent-query 网关 function（functions/agent-query，新建）
-   ├─ ① 认证：核 userId（AGENT_API_KEY）
+   ├─ ① 认证：AGENT_API_KEY（插件↔网关共享密钥）；userId 用于 ② 授权解析 perms（非认证）
    ├─ ② 授权：查 perms = { branch_nums, can_see_cost, hidden_columns }
    │         （底座=branch_nums；区域/人员映射后填；MVP 全量占位 ["*"]）
    ├─ ③ SQL 白名单：只 SELECT / 禁 read_parquet 与写操作 / 强制 LIMIT
@@ -388,6 +388,36 @@ DuckDB /query〔改造：每请求独立连接 + AGENT_API_KEY〕
 - 开：DuckDB 明细自由探索（权限视图）+ PG 汇总表查询（RLS）+ 跨引擎小维表搬运 JOIN
 - 不开：即席跨引擎大表 JOIN（走 `/compute` 物化）
 - 后填：门店/区域/人员 → branch_nums 映射（perms 数据，不动架构）
+
+### 4.3 OpenClaw 消费侧：全局 tool-plugin + skill + 可信 userid 注入（已实测 2026-07-05）
+
+§4.2 的网关已就绪；本节定义**消费侧**——OpenClaw 如何让所有企微用户开箱即问、且每次查询按其身份走后端鉴权（全局生效、用户零配置、不靠 LLM 传 userId）。
+
+**架构选型（探针实测确认）：native tool-plugin，非远程 MCP server。**
+- OpenClaw 把企微可信 userid 注入 **native plugin tool 的 `toolContext.requesterSenderId`**（探针实测：用户张铎 → `requesterSenderId="ZhangDuo"`；同上下文还有 `messageChannel="wecom"`、`sessionKey="agent:main:wecom:default:direct:zhangduo"`、`deliveryContext.to="wecom:ZhangDuo"`、`sandboxed`）。
+- **核心不把 sender 透传给 `mcp.servers`**（`x-openclaw-*` header 全表无 userid；`x-openclaw-wecom-userid` 是 wecom 插件专给自己 MCP server 加的）。故 query tool **必须**是 native plugin，不能是远程 MCP。
+- `defineToolPlugin` 简单 `execute(params, config, {api,signal,toolCallId,onUpdate})` 第三参 context **无 sender**；**必须用 factory 形式** `api.registerTool((toolContext) => toolDef)`（每轮调用，非启动期）才能拿 `toolContext.requesterSenderId`。
+
+**组件（`openclaw/data-query-plugin/`，入仓 + `openclaw plugins install -l` link 安装）：**
+- `package.json`（`openclaw.extensions:["./index.js"]`）+ `openclaw.plugin.json`（`id`、`contracts.tools:["query_retail_data"]`、`activation.onStartup:true`）+ `index.js`。
+- `index.js`：`definePluginEntry`（from `openclaw/plugin-sdk/plugin-entry`）+ factory 注册 `query_retail_data(sql)`；execute 读 `toolContext.requesterSenderId` + `process.env.AGENT_API_KEY`，POST `http://insforge:7130/functions/agent-query` body `{sql, userId, agent_api_key}`，返回结果给 LLM。
+- `skills/retail-query/SKILL.md`：教 LLM——`retail_detail` 视图列（标注成本敏感组）+ 汇总表清单（report_daily_sales/category/weekly_trend）+ DuckDB 语法 + 书写规范（**查 `retail_detail` 视图、禁 `read_parquet`、强制 LIMIT、成本列可能被网关脱敏为 NULL 勿依赖**）。
+
+**可信 userid 流（全局 + 后端按人鉴权）：**
+```
+企微用户提问 → wecom channel（FromUserId，可信）
+  → OpenClaw 每 turn 注入 toolContext.requesterSenderId（每用户每轮，非 LLM 传）
+  → query_retail_data(sql) execute：senderId + AGENT_API_KEY（容器 env，不进 LLM）
+  → POST agent-query 网关 {sql, userId=senderId, agent_api_key}
+  → 网关 get_user_perms(userId) → 行/列过滤 → 返回
+```
+- **全局**：插件 `activation.onStartup` + 装入即进 `plugins.allow` → 所有企微用户开箱可用，无需逐人配。
+- **按人鉴权**：userId 由 OpenClaw 从企微可信注入，用户端零配置；改权限=改 DB（`org_departments.branch_nums/can_see_cost`），不动 OpenClaw。
+- **不千人千面**：权限数据在 DB，OpenClaw 侧零用户态；`AGENT_API_KEY` 留 openclaw 容器 env（`openclaw/.env`，compose `env_file` 注入），用户/LLM 均不可见。
+
+**网络**：openclaw 容器在 `deploy_insforge-network`，直连 `insforge:7130`（内网，已实测 http=302），网关 URL 用 `http://insforge:7130/functions/agent-query`（不走公网/nginx）。
+
+**部署注意（探针踩坑）**：`openclaw plugins install -l <path>` link 安装会写 `openclaw.json` 的 `plugins.{entries,allow,load.paths}` + 需重启容器加载；卸载 `uninstall --force` 会残留 `load.paths` 指向已删目录 → 配置无效、gateway 崩溃循环。卸后必须清 `load.paths` 或 `openclaw doctor --fix`。
 
 ---
 
