@@ -129,7 +129,7 @@ set_secret "WECOM_TOKEN" "${WECOM_TOKEN:-}"
 set_secret "WECOM_ENCODING_AES_KEY" "${WECOM_ENCODING_AES_KEY:-}"
 # function 内部读报表/写审计所需（createClient 调 InsForge API + 推送卡片链接）
 set_secret "INSFORGE_BASE_URL" "${INSFORGE_BASE_URL:-http://insforge:7130}"
-# scheduler function 查询 collect_tasks 用（functions/scheduler:23 读 INSFORGE_API_KEY，缺则回退 ANON_KEY）
+# 管理 API key（ik_），function 内 createClient/admin 调用备用（当前无固定消费者，保留备用）
 set_secret "INSFORGE_API_KEY" "${INSFORGE_API_KEY:-}"
 set_secret "ANON_KEY" "${NEXT_PUBLIC_INSFORGE_ANON_KEY:-}"
 set_secret "REPORT_URL" "${REPORT_URL:-https://${DOMAIN:-localhost}}"

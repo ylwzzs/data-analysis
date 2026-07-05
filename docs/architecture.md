@@ -164,7 +164,9 @@ POST /collect_logs            → 写入采集日志
 |----------|------|------|
 | `wecom-oauth` | 企微登录 | ✅ |
 | `wecom-sync-contacts` | 通讯录同步 | ✅ |
-| `scheduler` | 定时调度调度器 | ✅（备用） |
+
+> 定时调度由 web 端 `web/lib/scheduler.ts` 承担（instrumentation 自启动 + node-cron），不使用 edge function。
+> 曾有的 `functions/scheduler` 因用 ik_ key 当 Bearer 查 PostgREST（只认 JWT）必 401、长期失能，已于 2026-07-05 移除。
 
 **注意事项**：
 - `Deno.env.get()` 只能读取 function secrets，不能读取 docker-compose env
