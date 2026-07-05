@@ -7,8 +7,9 @@
 
 // ===== 配置 =====
 const AGENT_API_KEY = Deno.env.get("AGENT_API_KEY");
-const JWT_SECRET = Deno.env.get("JWT_SECRET");
-const ANON_KEY = Deno.env.get("ANON_KEY"); // service key：调 get_user_perms + 写审计
+// 签名密钥：优先专用 JWT_SIGNING_KEY（JWT_SECRET 老 function secret 历史加密损坏，注入空串）；
+// 回退到容器 env JWT_SECRET（compose 注入，恒在，值同 .env 的 JWT_SECRET）。
+const JWT_SECRET = Deno.env.get("JWT_SIGNING_KEY") || Deno.env.get("JWT_SECRET") || "";
 const DUCKDB_URL = Deno.env.get("DUCKDB_URL") || "http://duckdb:9000";
 const POSTGREST_URL = Deno.env.get("POSTGREST_BASE_URL") || "http://postgrest:3000";
 
@@ -48,6 +49,13 @@ async function signJwt(payload, secret) {
   );
   const sig = await crypto.subtle.sign("HMAC", key, enc.encode(data));
   return `${data}.${b64url(sig)}`;
+}
+
+// 服务级短时 JWT（role=authenticated）：网关直连 PostgREST 用。
+// PostgREST 不认 InsForge 的 anon_key（非 JWT），用 JWT_SECRET 自签的 JWT 它才认。
+async function serviceJwt() {
+  const now = Math.floor(Date.now() / 1000);
+  return signJwt({ sub: "agent-query", role: "authenticated", iss: "agent-query", iat: now, exp: now + 60 }, JWT_SECRET);
 }
 
 // ===== 工具 =====
@@ -124,7 +132,7 @@ async function runPg(userSelect, userId, perms) {
   );
   const res = await fetch(POSTGREST_URL + "/rpc/execute_sql_rls", {
     method: "POST",
-    headers: { apikey: ANON_KEY, Authorization: "Bearer " + token, "Content-Type": "application/json" },
+    headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
     body: JSON.stringify({ p_query: userSelect }),
   });
   const body = await res.json();
@@ -141,7 +149,7 @@ async function audit({ userId, userName, sql, finalSql, engine, rows, ms, err })
   try {
     await fetch(POSTGREST_URL + "/agent_query_logs", {
       method: "POST",
-      headers: { apikey: ANON_KEY, Authorization: "Bearer " + ANON_KEY, "Content-Type": "application/json", Prefer: "return=minimal" },
+      headers: { Authorization: "Bearer " + (await serviceJwt()), "Content-Type": "application/json", Prefer: "return=minimal" },
       body: JSON.stringify({
         user_id: userId,
         user_name: userName || null,
@@ -180,7 +188,7 @@ module.exports = async function (req) {
   try {
     const pr = await fetch(POSTGREST_URL + "/rpc/get_user_perms", {
       method: "POST",
-      headers: { apikey: ANON_KEY, Authorization: "Bearer " + ANON_KEY, "Content-Type": "application/json" },
+      headers: { Authorization: "Bearer " + (await serviceJwt()), "Content-Type": "application/json" },
       body: JSON.stringify({ p_wecom_id: userId }),
     });
     perms = await pr.json();

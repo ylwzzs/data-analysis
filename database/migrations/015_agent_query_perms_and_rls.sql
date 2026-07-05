@@ -142,7 +142,9 @@ BEGIN
     RETURN NEXT jsonb_build_object('error', 'forbidden_statement');
     RETURN;
   END IF;
-  RETURN QUERY EXECUTE p_query;
+  -- 包一层 to_jsonb：把任意列结构的结果行统一成 JSONB（匹配 RETURNS SETOF JSONB）。
+  -- p_query 已过白名单（仅 SELECT），拼接安全。
+  RETURN QUERY EXECUTE 'SELECT to_jsonb(q) FROM (' || p_query || ') AS q';
 END;
 $$;
 
