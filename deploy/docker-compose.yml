@@ -141,6 +141,8 @@ services:
       - PG_DATABASE=${POSTGRES_DB:-insforge}
       - PG_USER=${POSTGRES_USER:-postgres}
       - PG_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      # 智能问数：/query 网关鉴权密钥（架构文档 §4.2），仅 agent-query 网关持有
+      - AGENT_API_KEY=${AGENT_API_KEY}
     volumes:
       - duckdb-cache:/var/lib/duckdb/cache
     networks:

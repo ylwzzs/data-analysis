@@ -108,6 +108,8 @@ set_secret "WECOM_SECRET" "${WECOM_SECRET:-}"
 set_secret "WECOM_AGENT_ID" "${WECOM_AGENT_ID:-}"
 # function 内部签 JWT 用（wecom-sync-contacts/webhook 需要 authenticated role 写入）
 set_secret "JWT_SECRET" "${JWT_SECRET:-}"
+# 智能问数：agent-query 网关鉴权 /query 用（架构文档 §4.2）
+set_secret "AGENT_API_KEY" "${AGENT_API_KEY:-}"
 # 通讯录变更事件推送（webhook 接收）
 set_secret "WECOM_TOKEN" "${WECOM_TOKEN:-}"
 set_secret "WECOM_ENCODING_AES_KEY" "${WECOM_ENCODING_AES_KEY:-}"

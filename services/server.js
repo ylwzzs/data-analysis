@@ -14,6 +14,12 @@ const S3_ACCESS_KEY = process.env.S3_ACCESS_KEY || "";
 const S3_SECRET_KEY = process.env.S3_SECRET_KEY || "";
 const S3_BUCKET = process.env.S3_BUCKET || "lemeng-datasource";
 
+// 智能问数网关鉴权密钥（架构文档 §4.2）：duckdb 服务仅 docker 内网可达，
+// AGENT_API_KEY 是其上的防御层——只有持有此 key 的 agent-query 网关能调 /query。
+const AGENT_API_KEY = process.env.AGENT_API_KEY || "";
+// S3 endpoint 去协议头后的 host（SET s3_endpoint 用），initDuckDB 与每请求连接共用
+const S3_ENDPOINT_HOST = S3_ENDPOINT.replace("http://", "").replace("https://", "");
+
 // PostgreSQL 配置（写入汇总结果）
 const PG_HOST = process.env.PG_HOST || "postgres";
 const PG_PORT = process.env.PG_PORT || 5432;
@@ -32,13 +38,8 @@ async function initDuckDB() {
   db = new duckdb.Database(":memory:");
   conn = db.connect();
 
-  // 配置 S3
-  const endpoint = S3_ENDPOINT.replace("http://", "").replace("https://", "");
-  await runQuery("SET s3_endpoint='" + endpoint + "'");
-  await runQuery("SET s3_access_key_id='" + S3_ACCESS_KEY + "'");
-  await runQuery("SET s3_secret_access_key='" + S3_SECRET_KEY + "'");
-  await runQuery("SET s3_use_ssl=false");
-  await runQuery("SET s3_region='xinan-1'");
+  // 配置 S3（共享连接）
+  await configureS3(conn);
 
   // 初始化 PostgreSQL 连接池
   if (PG_HOST && PG_USER) {
@@ -60,13 +61,27 @@ async function initDuckDB() {
   console.log("DuckDB initialized with S3:", S3_ENDPOINT);
 }
 
-function runQuery(sql) {
+function runQueryOn(c, sql) {
   return new Promise((resolve, reject) => {
-    conn.all(sql, (err, result) => {
+    c.all(sql, (err, result) => {
       if (err) reject(err);
       else resolve(result);
     });
   });
+}
+
+// 共享连接（/transform /merge /compute 用，互不隔离）
+function runQuery(sql) {
+  return runQueryOn(conn, sql);
+}
+
+// 在给定连接上配置 S3（天翼云 OOS）。每请求独立连接不继承全局 SET，必须重配（已实测）。
+async function configureS3(c) {
+  await runQueryOn(c, "SET s3_endpoint='" + S3_ENDPOINT_HOST + "'");
+  await runQueryOn(c, "SET s3_access_key_id='" + S3_ACCESS_KEY + "'");
+  await runQueryOn(c, "SET s3_secret_access_key='" + S3_SECRET_KEY + "'");
+  await runQueryOn(c, "SET s3_use_ssl=false");
+  await runQueryOn(c, "SET s3_region='xinan-1'");
 }
 
 function escapeSQL(val) {
@@ -93,14 +108,30 @@ app.get("/health", (req, res) => {
   res.json({ status: "ok", service: "duckdb", s3_endpoint: S3_ENDPOINT });
 });
 
-// 查询执行
+// 查询执行（智能问数网关专用，架构文档 §4.2）
+// - AGENT_API_KEY 校验：仅网关可调
+// - 每请求独立连接 db.connect()：网关提交的「CREATE TEMP VIEW <权限定义>; <LLM SQL>」
+//   中的临时视图随连接天然隔离，跨请求无污染无 race（已实测）
+// - 新连接不继承全局 S3 配置，内部重配 configureS3
 app.post("/query", async (req, res) => {
+  let c = null;
   try {
-    const { sql, user_id, dept_id } = req.body;
+    const { sql, user_id } = req.body;
     if (!sql) return res.status(400).json({ error: "Missing sql" });
 
-    console.log("[query] user:", user_id, "sql:", sql.substring(0, 100));
-    const result = await runQuery(sql);
+    // AGENT_API_KEY 校验（头 x-agent-key 或 Authorization: Bearer）
+    const reqKey = req.headers["x-agent-key"]
+      || (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+    if (!AGENT_API_KEY || reqKey !== AGENT_API_KEY) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    console.log("[query] user:", user_id, "sql:", sql.substring(0, 120));
+
+    // 每请求独立连接
+    c = db.connect();
+    await configureS3(c);
+    const result = await runQueryOn(c, sql);
 
     // DuckDB 的 COUNT/SUM 等聚合可能返回 BigInt，JSON.stringify 默认无法序列化 BigInt
     // 这里统一转成 number（超过 Number.MAX_SAFE_INTEGER 的极少数场景用字符串兜底）
@@ -120,6 +151,8 @@ app.post("/query", async (req, res) => {
   } catch (err) {
     console.error("[query] Error:", err.message);
     res.status(500).json({ error: err.message });
+  } finally {
+    if (c) try { c.close(); } catch {}
   }
 });
 
