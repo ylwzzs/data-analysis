@@ -1,6 +1,8 @@
 # 数据分析平台完整架构文档
 
 > **重要：所有代码实现必须严格按照此架构执行。任何架构变更必须先征得用户同意并更新此文档后再执行。**
+>
+> **本文档为唯一架构文档**；原 `architecture-data-collect.md` 已并入（数据采集见 §五、智能问数鉴权见 §4.2）。
 
 ---
 
@@ -186,7 +188,7 @@ POST /collect_logs            → 写入采集日志
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
 │  角色 1：数据转换                                                │
-│  端点：POST /transform                                           │
+│  端点：POST /transform（全量覆盖）/ POST /merge（增量合并）       │
 │  ├── 输入：JSON 明细数据 + 配置                                  │
 │  ├── 处理：校验、去重、分片                                       │
 │  ├── 输出：Parquet 写入 OOS                                      │
@@ -205,9 +207,9 @@ POST /collect_logs            → 写入采集日志
 │  角色 3：个性化查询                                               │
 │  端点：POST /query                                               │
 │  ├── 输入：SQL（OpenClaw 生成）                                   │
-│  ├── 处理：鉴权 → read_parquet(OOS) → 执行                       │
+│  ├── 处理：网关建权限视图（行+列脱敏）→ read_parquet → 执行（见 §4.2）                       │
 │  ├── 输出：查询结果                                               │
-│  ├── 鉴权：⏳ 待讨论                                             │
+│  ├── 鉴权：✅ 已设计（见 §4.2）                                  │
 │  └── 状态：⏳ 待实现                                             │
 │                                                                 │
 │  其他端点：                                                      │
@@ -264,11 +266,14 @@ POST /collect_logs            → 写入采集日志
 | `DUCKDB_URL` | DuckDB 服务地址 |
 | `WECOM_*` | 企微配置 |
 
-**定时调度**：
-- 使用 node-cron
-- 位于 `lib/scheduler.ts`
-- 首次 API 调用时初始化
-- 时区：Asia/Shanghai
+**定时调度**（`lib/scheduler.ts`，node-cron，Asia/Shanghai）：
+- **自初始化**：server 启动时 `web/instrumentation.ts` 的 `register()` 调 `ensureSchedulerInitialized`（带退避重试），web 容器重启后 cron 不再静默停止；首次 `/api/admin` 调用兜底
+- **防重入**：`runningTasks` 集合（globalThis 跨 chunk 单例），并发触发跳过
+- **任务配置**：`collect_tasks` 表（schedule_cron / enabled / params / 运行时水位线 watermark）
+- **零售明细两模式**：
+  - 全量（full）：新一天 / 距上次全量≥55min / 无水位线 → count → 全部分页 → `/transform` 覆盖 all.parquet（每小时核对一次）
+  - 增量（incremental）：其余每 5 分钟 → count → 若总数 > 水位线则从上次页（重叠 1 页）续采尾部 → `/merge` 合并去重写回
+- **水位线 watermark**（写回 params）：`{ date, last_count, last_full_ts }`；仅落盘成功才推进 last_count，失败保持旧值下次多重叠；跨天 date≠今天 → 自动 full
 
 ---
 
@@ -308,12 +313,104 @@ POST /collect_logs            → 写入采集日志
 
 **集成方式**：
 ```
-用户提问 → OpenClaw → 生成 SQL → DuckDB /query → 返回结果
+用户提问 → OpenClaw（skill 约束 SQL 书写 + tool 调用网关）
+         → agent-query 网关（认证 + 授权 + 拼权限视图）
+         → DuckDB /query 或 PostgreSQL（详见 §4.2）
 ```
+
+### 4.2 智能问数查询与鉴权架构（已设计 + 已验证，2026-07-05）
+
+对标业界 Text-to-SQL 治理共识（RLS + 身份注入 session + 永不信任 LLM）。权限作用于**数据范围（行级）+ 敏感列（列级）**，不限定"能问什么"，保留自由分析能力。
+
+**完整链路：**
+```
+企微用户提问（FromUserId = wecom_id）
+   ↓
+OpenClaw（企微 channel 已接通 + DeepSeek-V4-Flash）
+   ├─ skill：明细视图 schema + 汇总表清单 + DuckDB 语法 + 书写规范（"查 retail_detail 视图，不 read_parquet"）
+   └─ tool query_data：POST 网关 {sql, userId}
+   ↓
+agent-query 网关 function（functions/agent-query，新建）
+   ├─ ① 认证：核 userId（AGENT_API_KEY）
+   ├─ ② 授权：查 perms = { branch_nums, can_see_cost, hidden_columns }
+   │         （底座=branch_nums；区域/人员映射后填；MVP 全量占位 ["*"]）
+   ├─ ③ SQL 白名单：只 SELECT / 禁 read_parquet 与写操作 / 强制 LIMIT
+   ├─ ④ 拼权限视图：行 WHERE branch_num IN (...) + 列 CASE 脱敏成本组
+   ├─ ⑤ 跨引擎编排（若 JOIN 涉及 PG 维表）：用用户 JWT 查 PostgREST（走 RLS）→ 注入 DuckDB 临时表
+   └─ ⑥ 审计：写 agent_query_logs（006 已建）
+   ↓
+DuckDB /query〔改造：每请求独立连接 + AGENT_API_KEY〕
+   ├─ 独立连接 → 临时视图跨连接隔离（已实测）
+   ├─ 一次提交「CREATE TEMP VIEW retail_detail AS <权限定义>; <LLM SQL>」（多语句，已实测）
+   └─ 执行 → 返回（权限硬编码进视图，绕不过）
+```
+
+**行级权限（底座 = branch_nums 门店）：**
+- DuckDB：权限视图 `WHERE branch_num IN ('54','127',...)`（branch_num 是 VARCHAR，已实测）
+- PostgreSQL：汇总表 RLS 用 `request.jwt.claims.branch_nums`（claim 由网关代签短时 JWT 注入，复用 wecom-oauth 的 signJwt + JWT_SECRET）
+- 区域/人员维度：后填。映射到 branch_nums 集合后自动生效，**不改架构**
+
+**列级脱敏（成本/毛利成组，防反算）：**
+- 敏感组：`item_cost_price` / `order_detail_cost` / `cost` / `profit` / `sale_profit_rate`；汇总侧 `total_profit`
+- DuckDB：视图 SELECT 列表 `CASE WHEN {{can_see_cost}} THEN col ELSE NULL END`（已实测）
+- PostgreSQL：claim 视图 `CASE WHEN current_setting('request.jwt.claims.can_see_cost')::bool THEN col ELSE NULL END`
+- **必须成组脱敏**：只藏 `profit` 不藏 `sale_profit_rate`，可被 `profit = sale_money × sale_profit_rate` 反算
+
+**agent-query 网关职责（`functions/agent-query/`，新建）：**
+认证 → 授权（查 perms）→ SQL 白名单 → 拼权限视图 → 跨引擎搬运编排 → 审计。
+
+**DuckDB /query 改造点（`services/server.js`）：**
+- 每请求独立连接：`const c = db.connect()` + 内部 `SET s3_*`（新连接不继承 s3，已实测）→ 临时视图随连接天然隔离，无污染无 race
+- `AGENT_API_KEY` 校验 + docker 网络隔离（仅网关容器可访问 9000）
+- 多语句一次提交（`conn.all` 支持分号，已实测）
+
+**三层 JOIN 策略：**
+
+| JOIN 场景 | 策略 | 权限保障 |
+|---|---|---|
+| DuckDB 内多表（明细↔明细） | 即席 | 各表建权限视图，行/列硬编码 |
+| PostgreSQL 内多表 | 即席 | RLS 全覆盖 |
+| 跨引擎·PG 小维表 JOIN DuckDB 明细 | 即席·小表搬运 | 网关用用户 JWT 查 PG（走 RLS）→ Appender 注入 DuckDB 临时表 → DuckDB 内 JOIN |
+| 跨引擎·两边大事实表 | 物化 | `/compute` 后台预算成宽表落 PG |
+
+> **小表搬运而非 DuckDB federated**：federated 用固定服务账号连 PG、不注入 JWT claim → 绕过 RLS；搬运由网关先用用户身份查 PG（权限真实），再把已过滤子集喂给 DuckDB。约束：小表搬、大表留。已实测：JOIN 下行泄露=0、成本列全 NULL。
+
+**验证状态（2026-07-05 服务器实测）：**
+- ✅ read_parquet glob 跨品牌/日期、全 VARCHAR、CASE 列脱敏、多语句分号提交、`db.connect()` 跨连接隔离、跨引擎小表搬运 JOIN（行/列权限在 JOIN 下均 hold）
+- ✅ OpenClaw 企微 channel 已接通（日志实况：ZhangDuo 真实提问）、框架成熟（tool/skill/plugin/cron）
+- ✅ PG RLS + PostgREST jwt.claims（005 在跑）、网关代签 JWT（wecom-oauth 在跑）
+- ⏳ PG 嵌套 claim 列脱敏视图（`request.jwt.claims.can_see_cost`）：机制标准，实现时验
+- ⏳ DeepSeek-V4-Flash SQL 质量：靠 skill 优化（搁置实测）
+
+**MVP 范围：**
+- 开：DuckDB 明细自由探索（权限视图）+ PG 汇总表查询（RLS）+ 跨引擎小维表搬运 JOIN
+- 不开：即席跨引擎大表 JOIN（走 `/compute` 物化）
+- 后填：门店/区域/人员 → branch_nums 映射（perms 数据，不动架构）
 
 ---
 
 ## 五、数据采集系统
+
+**数据源与采集任务架构（两层）：**
+
+```
+数据源（data_sources）          ← 持有鉴权：token / appid+secret（按 auth_type）
+│   粒度 = (外部系统, 品牌)
+├── 乐檬-3120（auth_type=bearer，token 的 company_id=3120，~5 天有效）
+│   ├── 采集任务：商品档案采集     ← 共用上层 token
+│   └── 采集任务：销售订单明细采集 ← 共用上层 token
+├── 乐檬-64188（auth_type=bearer，token 的 company_id=64188）
+│   └── 采集任务：销售订单明细采集 ← 共用上层 token
+└── 金蝶（未来，auth_type=kingdee，credential_data 存 appid/secret）
+    └── 采集任务：…                ← 共用上层鉴权
+```
+
+- **鉴权归属数据源**：一个 (系统, 品牌) 组合 = 一个数据源，其下所有采集任务共用该源唯一 token。杜绝「同系统拆多源、各存一份 token」导致的一活一死。
+- **品牌(company)由 token 决定，非请求参数**：写在 JWT 的 `company_id` claim 里；换品牌 = 换 token（重新登录）。
+- **branch_nums 传空 = 该品牌全部门店**：`[]` 返回当前 token(company) 维度全量（实测 3120=13118、64188=8134/天）。
+- **多品牌 token 可同时有效**：实测切换品牌不互顶。
+- **scheduler 读凭证**：按 `collect_tasks.source_id` 取 `auth_credentials`，同源任务自然共用。
+- **扩展约定**：新增源类型（金蝶等）时，scheduler 按 `data_source.auth_type` 分派鉴权方式。
 
 ### 5.1 采集流程
 
@@ -409,25 +506,16 @@ WHERE departments ?| current_setting('request.jwt.claims.departments')
 ```
 
 **权限表**：
-- `org_users`：用户信息 + department_ids
-- `org_departments`：部门信息 + branch_nums（可访问门店）
-- `data_permissions`：部门权限配置
+- `org_users`：用户信息 + department_ids（+ wecom_id 企微映射）
+- `org_departments`：部门信息 + branch_nums（可访问门店，**智能问数权限底座**）+ allowed_regions/data_scope（006 预留）
+- `data_permissions`：部门权限配置（通用 ABAC，待启用）
+- 智能问数 perms = `{ branch_nums, can_see_cost }`：详见 §4.2
 
 ### 6.3 DuckDB /query 鉴权
 
-```
-OpenClaw 生成 SQL
-     ↓
-前端 JWT 提取 departments
-     ↓
-DuckDB 查询 data_permissions
-     ↓
-注入 branch_num 过滤条件
-     ↓
-执行 SQL（只返回允许的数据）
-```
+详见 §4.2「智能问数查询与鉴权架构」。
 
-**鉴权逻辑**：⏳ 待讨论
+核心：网关按身份建**临时权限视图**（行 `branch_nums` + 列成本组脱敏），硬编码进视图定义；LLM 生成的 SQL 在视图上执行，引擎层强制、不可绕过。`/query` 改每请求独立连接实现视图隔离；PostgreSQL 侧走真 RLS（`request.jwt.claims.branch_nums`，网关代签短时 JWT 注入）。
 
 ---
 
@@ -475,14 +563,17 @@ SHA256(auth + timestamp + nonce + branch_nums + scope_ids + SECRET_KEY + url + b
 - Access Key：`OOS_ACCESS_KEY`
 - Secret Key：`OOS_SECRET_KEY`
 
-**存储结构**：
+**存储结构**（按品牌 company_id 分区）：
 ```
 lemeng-datasource/
-└── lemeng/retail_detail/{date}/
-    ├── all.parquet              → 合并文件
+└── lemeng/retail_detail/{company_id}/{date}/   ← company_id 从 token payload 解出
+    ├── all.parquet              → 该品牌当日全部明细（权威文件）
     ├── branch_num_*.parquet     → 门店分片
     └── _quarantine.parquet      → 校验异常数据
 ```
+- 按品牌分区：各品牌采集各写各的文件，杜绝跨品牌 /merge 写竞争、order_no 跨品牌歧义
+- 跨品牌查询用 glob：`read_parquet('s3://lemeng-datasource/lemeng/retail_detail/*/{date}/all.parquet')`
+- 历史数据（2026-07-04 的 3120）曾写在无 company_id 的旧路径，已迁移或由下次全量核对重写
 
 ---
 
@@ -541,8 +632,17 @@ docker exec deploy-postgres-1 psql -U postgres -d insforge -c "<SQL>"
 | 汇总数据存储 | PostgreSQL | 2026-07-04 |
 | 报表查询 | PostgreSQL + PostgREST | 2026-07-04 |
 | PostgreSQL 鉴权 | RLS + 部门 ID | 早期 |
-| DuckDB /query 鉴权 | 待讨论 | 2026-07-04 |
-| OpenClaw 集成 | 自然语言查询 | 早期 |
+| DuckDB /query 鉴权 | 权限视图（行+列脱敏）+ 每请求独立连接 | 2026-07-05 |
+| OpenClaw 集成 | skill+tool → agent-query 网关 → /query | 2026-07-05 |
+| 跨引擎 JOIN 策略 | 同引擎即席 / 跨引擎小表搬运 / 大表物化 | 2026-07-05 |
+| 鉴权归属 | 数据源层（同源任务共用一 token），非任务层 | 2026-07-04 |
+| 数据源粒度 | (外部系统, 品牌)。乐檬每品牌一个数据源 | 2026-07-04 |
+| 品牌(company)归属 | 由 token 的 JWT `company_id` 决定，非请求参数 | 2026-07-04 |
+| 多品牌 token 共存 | 已实测：切换品牌不互顶 | 2026-07-04 |
+| branch_nums 取值 | 传空 `[]` = 该品牌全部门店 | 2026-07-04 |
+| OOS 存储 | 按品牌分区 `retail_detail/{company_id}/{date}/` | 2026-07-04 |
+| 零售明细采集模式 | 当天数据、8-24 点每 5 分钟增量 + 每小时全量核对 | 2026-07-04 |
+| scheduler 自初始化 | instrumentation `register()` 启动时初始化（globalThis 单例） | 2026-07-04 |
 
 ---
 
@@ -683,8 +783,10 @@ POST /compute {"report_type":"daily_supplier","date_from":"2026-07-02","date_to"
 | DuckDB /compute 端点 | ✅ 已实现 | 标准报表计算 |
 | PostgreSQL 汇总表 | ✅ 已创建 | report_daily_sales 等 |
 | 采集后自动触发计算 | ⏳ 待实现 | transform → compute |
-| DuckDB /query 鉴权 | ⏳ 待讨论 | OpenClaw 个性化查询 |
-| OpenClaw 集成 | ⏳ 待实现 | SQL 生成 + /query 调用 |
+| DuckDB /query 鉴权 | ✅ 已设计（§4.2） | 待实现：server.js 每请求连接 + AGENT_API_KEY |
+| OpenClaw 集成 | ✅ 已设计（§4.2） | 待实现：agent-query 网关 + skill/tool 配置 |
+| 列级脱敏（成本组） | ✅ 已设计（§4.2） | 待实现：视图 CASE + PG claim 视图 |
+| 跨引擎小表搬运 JOIN | ✅ 已验证（§4.2） | 待实现：网关编排（Appender 注入临时表） |
 | 美团数据源接入 | ⏳ 待讨论 | 架构待确认 |
 | 饿了么数据源接入 | ⏳ 待讨论 | 架构待确认 |
 
