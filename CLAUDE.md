@@ -57,19 +57,26 @@ ssh -i "/Users/Duo/WPS 云文档/其他/ShanHai-OPS.pem" root@data.shanhaiyiguo.
 
 **改代码前先用 `git diff --name-only` 判断改动范围，选择对应部署方式：**
 
-| 改动范围 | 部署方式 | 耗时 | 是否走 GHA |
-|---------|---------|------|-----------|
-| **只改 `functions/*/index.js`** | MCP 直更 + 清 Deno 缓存 | ~15秒 | ❌ 不需要 |
-| 改前端 `web/`、迁移 `database/`、配置 `deploy/` | GHA 完整部署 | 3-4分钟 | ✅ 需要 |
-| function + 前端都改 | MCP 先更 function，再 push 走 GHA | - | ✅ 需要 |
+| 改动范围 | 生产部署方式 | 是否走 GHA |
+|---------|------------|-----------|
+| **只改 `functions/*/index.js`** | SSH 服务器直调 InsForge API PUT（同 `deploy-functions.sh` 的 deploy_one）+ 清 Deno 缓存 | ❌ 不需要 |
+| 改前端 `web/`、迁移 `database/`、配置 `deploy/`、`services/` | GHA 完整部署 | ✅ 需要 |
+| function + 前端都改 | SSH 先 PUT function，再 push 走 GHA | ✅ 需要 |
 
 **核心原则：只改 function 时，不要 `git push` 触发 GHA。** GHA 部署 function 有限流（429）、构建慢、容易因无关步骤失败。
 
-### 只改 function 的部署流程（推荐）
+> ⚠️ **InsForge MCP 管的是本地 dev 实例，不是生产。**
+> MCP 配置 `--api_base_url http://localhost:7130` 指向**开发者本机**的 InsForge（`deploy-insforge-1` 等 dev 容器）。用它 `update-function` 只会改本地 dev，**生产纹丝不动**。
+> - MCP 用途：本地开发迭代 function、查本地 dev 数据。
+> - 生产 function 更新：走下面的 SSH 直调 API，或 push 触发 GHA。
 
-1. 用 InsForge MCP 直接更新（绕过 GHA 的 429 限流）
+### 只改 function 的生产部署流程
+
+1. SSH 到服务器，直调 InsForge API PUT 更新（与 `deploy-functions.sh` 的 deploy_one 同款；MCP 连本地 dev 改不到生产）
    ```bash
-   mcp__insforge__update-function --slug <function-name> --codeFile functions/<function-name>/index.js
+   ssh -i "/Users/Duo/WPS 云文档/其他/ShanHai-OPS.pem" root@data.shanhaiyiguo.com 'cd /opt/data-analytics-platform/deploy && set -a; . ./.env; set +a
+   body=$(jq -n --arg slug "<function-name>" --arg name "<function-name>" --arg desc "<function-name>" --rawfile code "$PWD/../functions/<function-name>/index.js" "{slug:\$slug,name:\$name,description:\$desc,code:\$code,status:\"active\"}")
+   curl -sf -X PUT -H "Authorization: Bearer $INSFORGE_API_KEY" -H "Content-Type: application/json" -d "$body" http://localhost:7130/api/functions/<function-name>'
    ```
 
 2. 清理 Deno 缓存使更新生效（**关键，否则跑旧代码**）
@@ -136,6 +143,16 @@ ssh -i "/Users/Duo/WPS 云文档/其他/ShanHai-OPS.pem" root@data.shanhaiyiguo.
 ```bash
 ssh -i "/Users/Duo/WPS 云文档/其他/ShanHai-OPS.pem" root@data.shanhaiyiguo.com "cd /opt/data-analytics-platform/deploy && docker exec deploy-deno-1 rm -rf /deno-dir/* && docker compose restart deno"
 ```
+
+### function secret 解密失败（注入空串把 function 搞崩）
+deno 日志出现 `Failed to decrypt secret <NAME>` = 该 secret 是用历史 `ENCRYPTION_KEY` 加密的孤儿密文。解密失败时运行时会注入**空串**并**覆盖容器 env**，导致读到该 secret 的 function 拿到空值崩溃。
+- 排查：`docker logs deploy-deno-1 --since 48h 2>&1 | grep -i decrypt`
+- 根因：`ENCRYPTION_KEY` 曾被改动 / 曾靠留空回退 `JWT_SECRET`（现已改必填）。
+- 治愈：`deploy-functions.sh` 的 `set_secret` 已是 **upsert**（POST 409→PUT），重跑即用当前 key 把全部 secret 重加密一遍：
+  ```bash
+  ssh -i "/Users/Duo/WPS 云文档/其他/ShanHai-OPS.pem" root@data.shanhaiyiguo.com "cd /opt/data-analytics-platform && bash scripts/deploy-functions.sh"
+  ```
+- 死 secret（无 function 读取的历史残留，如 `INSFORGE_API_KEY`/`WECOM_CONTACT_SECRET`）解密也会报错，确认无引用后 `DELETE /api/secrets/<KEY>` 清掉。
 
 ### 数据库权限问题
 ```bash
