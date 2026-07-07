@@ -607,7 +607,7 @@ OpenClaw（主动通知）──────────────┴─ POST 
                                    touser?, msgtype?}                └─────────────────┘
 ```
 
-- **接口**：`POST /functions/wecom-notify`，body `{ agent_api_key, content, title?, touser?, msgtype? }`，鉴权 `agent_api_key === AGENT_API_KEY`。
+- **接口**：`POST /functions/wecom-notify`，body `{ agent_api_key, msgtype, content?, title?, url?, touser?, articles?, template_card?, mentioned_list? }`，鉴权 `agent_api_key === AGENT_API_KEY`。`msgtype` 支持 `text`（可 @）/ `markdown` / `textcard`（可点击）/ `news`（图文，带图）/ `template_card`（模板卡片，含 text_notice/news_notice/button_interaction/vote_interaction/multiple_interaction）—— 覆盖企微应用消息全部常用类型；`image/voice/video/file/mpnews` 不支持（需 media 上传流水线，带图改用 `news.picurl`）。
 - **默认收件人**：secret `NOTIFY_DEFAULT_TUSERS`（`|` 分隔），替代历史写死的单 `ZhangDuo`。
 - **调用方**：web `notifyWecom`（薄客户端，经 `@insforge/sdk` invoke）、OpenClaw 主动通知（复用 `AGENT_API_KEY`）。
 - **限**：token 每次现取（告警量低，可接受）；InsForge 挂则告警发不出（其挂即大故障）。
