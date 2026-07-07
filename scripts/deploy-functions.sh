@@ -117,6 +117,10 @@ set_secret() {
 set_secret "WECOM_CORP_ID" "${WECOM_CORP_ID:-}"
 set_secret "WECOM_SECRET" "${WECOM_SECRET:-}"
 set_secret "WECOM_AGENT_ID" "${WECOM_AGENT_ID:-}"
+# 企微 App B（同步/通知全员应用，架构文档 §7.1）
+set_secret "WECOM_OPS_SECRET" "${WECOM_OPS_SECRET:-}"
+set_secret "WECOM_OPS_AGENT_ID" "${WECOM_OPS_AGENT_ID:-}"
+set_secret "NOTIFY_DEFAULT_TUSERS" "${NOTIFY_DEFAULT_TUSERS:-}"
 # function 内部签 JWT 用（wecom-sync-contacts/webhook 需要 authenticated role 写入）
 set_secret "JWT_SECRET" "${JWT_SECRET:-}"
 # agent-query 网关签名专用：JWT_SECRET 老 function secret 历史加密损坏（注入空串），
