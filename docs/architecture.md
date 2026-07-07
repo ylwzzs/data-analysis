@@ -427,7 +427,7 @@ DuckDB /query〔改造：每请求独立连接 + AGENT_API_KEY〕
 - **编造铁律（写进 SKILL.md）**：数据机器人头号风险是模型编造看似真实的数据。skill 最高铁律：「数据只能来自工具返回；工具没调/报错/空/无权限时必须如实说，**绝对禁止编造数字**」。malformed 导致工具不可用时模型会幻觉作答——这是触发该铁律的根因之一。
 - **🔴 插件 execute 签名（端到端阻塞坑，2026-07-05 实测）**：OpenClaw 调 native plugin tool 的签名是 **`execute(toolCallId, params, signal, onUpdate)`**——**第一个参数是 toolCallId（id 字符串），第二个才是模型传的参数对象**（runtime `agent-tools.before-tool-call.js:1510`、内置工具全是 `execute(_id, params)`）。写插件**必须从第二个参数取值**：`execute: (toolCallId, params) => ...`。若误用 `(args) =>`，会把 toolCallId 当 params → 参数恒 undefined → 网关收空 body 每次必现 `missing sql/userId`（曾两度误判为模型编造，实为签名错位吃掉了模型已正确传入的 SQL）。
 - **AGENT_API_KEY 注入**：openclaw 容器经 compose `environment: AGENT_API_KEY: ${AGENT_API_KEY:-}` + `AGENT_QUERY_URL` 注入，与 function secret 同源（deploy/.env）。
-- **主动通知出口（统一）**：OpenClaw 需要主动发通知（采集完成/异常告警）时，POST `http://insforge:7130/functions/wecom-notify`（body `agent_api_key` + `content`），复用 `AGENT_API_KEY`，走 App B 发送（见 §7.1.1）。对话回复仍走 App C channel。
+- **主动通知出口（统一，`openclaw/notify-plugin/`）**：OpenClaw 主动发通知经 native tool `send_notify({content, title?, touser?, msgtype?})` + `notify` skill → POST `wecom-notify` → App B 发送（§7.1.1）。plugin factory 注入 `AGENT_API_KEY` + 解析 `@sender` 收件人（复用核心注入的 `requesterSenderId`）；对话回复仍走 App C channel。
 - **汇总表滞后（已临时补，定时聚合待做）**：`report_daily_sales` 等靠 `/compute`（`services/server.js`，按 `report_definitions` 配置）**按需手动**聚合、无定时任务，曾卡在 7/2 → 明细 retail_detail 实时但汇总滞后 → bot 误报"今天无数据"。skill 已注明 retail_detail 实时、汇总有延迟。/compute 定时聚合待做。
 - **模型延迟**：DeepSeek-V4-Flash 经 wishub 单次 1-12s + 一个排名问题跑十几轮往返（疑似推理模型），数据查询场景偏慢；换非推理快模型才能根治。
 

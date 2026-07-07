@@ -1,0 +1,21 @@
+{
+  "name": "openclaw-plugin-notify",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "Unified notification tool — OpenClaw proactive notifications forwarded to the wecom-notify function (WeCom App B).",
+  "files": [
+    "index.js",
+    "skills",
+    "openclaw.plugin.json",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "openclaw": ">=2026.5.17"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.js"
+    ]
+  }
+}

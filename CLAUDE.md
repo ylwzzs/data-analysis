@@ -152,7 +152,7 @@ deno 日志出现 `Failed to decrypt secret <NAME>` = 该 secret 是用历史 `E
   ```bash
   ssh -i "/Users/Duo/WPS 云文档/其他/ShanHai-OPS.pem" root@data.shanhaiyiguo.com "cd /opt/data-analytics-platform && bash scripts/deploy-functions.sh"
   ```
-- 死 secret（无 function 读取的历史残留，如 `INSFORGE_API_KEY`/`WECOM_CONTACT_SECRET`）解密也会报错，确认无引用后 `DELETE /api/secrets/<KEY>` 清掉。
+- 死 secret（无 function 读取的历史残留，如 `INSFORGE_API_KEY`）解密也会报错，确认无引用后 `DELETE /api/secrets/<KEY>` 清掉。
 
 ### 数据库权限问题
 ```bash
