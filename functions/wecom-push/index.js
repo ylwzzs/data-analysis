@@ -1,7 +1,7 @@
 // functions/wecom-push/index.js
 // 定时推送报表摘要到企业微信（应用消息 textcard）。
 // 由 InsForge schedule 定时 POST 触发，也可手动 invoke。
-// 所需 secrets：WECOM_CORP_ID / WECOM_SECRET / WECOM_AGENT_ID
+// 所需 secrets：WECOM_CORP_ID / WECOM_OPS_SECRET / WECOM_OPS_AGENT_ID（App B）
 // 注意：InsForge OSS runtime 用 CommonJS + 全局注入（createClient、Deno），
 //       不要用 ESM 的 import/export。
 // HS256 JWT 签发（deno runtime 内联——InsForge function 单文件部署，无法 require 共享模块）。
@@ -46,11 +46,11 @@ module.exports = async function (req) {
   }
 
   const corpId = Deno.env.get("WECOM_CORP_ID");
-  const corpSecret = Deno.env.get("WECOM_SECRET");
-  const agentId = Deno.env.get("WECOM_AGENT_ID");
+  const corpSecret = Deno.env.get("WECOM_OPS_SECRET");
+  const agentId = Deno.env.get("WECOM_OPS_AGENT_ID");
   if (!corpId || !corpSecret || !agentId) {
     return json(
-      { error: "WECOM_CORP_ID/WECOM_SECRET/WECOM_AGENT_ID secrets not set" },
+      { error: "WECOM_CORP_ID/WECOM_OPS_SECRET/WECOM_OPS_AGENT_ID secrets not set" },
       500,
     );
   }
