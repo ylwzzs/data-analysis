@@ -427,6 +427,7 @@ DuckDB /query〔改造：每请求独立连接 + AGENT_API_KEY〕
 - **编造铁律（写进 SKILL.md）**：数据机器人头号风险是模型编造看似真实的数据。skill 最高铁律：「数据只能来自工具返回；工具没调/报错/空/无权限时必须如实说，**绝对禁止编造数字**」。malformed 导致工具不可用时模型会幻觉作答——这是触发该铁律的根因之一。
 - **🔴 插件 execute 签名（端到端阻塞坑，2026-07-05 实测）**：OpenClaw 调 native plugin tool 的签名是 **`execute(toolCallId, params, signal, onUpdate)`**——**第一个参数是 toolCallId（id 字符串），第二个才是模型传的参数对象**（runtime `agent-tools.before-tool-call.js:1510`、内置工具全是 `execute(_id, params)`）。写插件**必须从第二个参数取值**：`execute: (toolCallId, params) => ...`。若误用 `(args) =>`，会把 toolCallId 当 params → 参数恒 undefined → 网关收空 body 每次必现 `missing sql/userId`（曾两度误判为模型编造，实为签名错位吃掉了模型已正确传入的 SQL）。
 - **AGENT_API_KEY 注入**：openclaw 容器经 compose `environment: AGENT_API_KEY: ${AGENT_API_KEY:-}` + `AGENT_QUERY_URL` 注入，与 function secret 同源（deploy/.env）。
+- **主动通知出口（统一）**：OpenClaw 需要主动发通知（采集完成/异常告警）时，POST `http://insforge:7130/functions/wecom-notify`（body `agent_api_key` + `content`），复用 `AGENT_API_KEY`，走 App B 发送（见 §7.1.1）。对话回复仍走 App C channel。
 - **汇总表滞后（已临时补，定时聚合待做）**：`report_daily_sales` 等靠 `/compute`（`services/server.js`，按 `report_definitions` 配置）**按需手动**聚合、无定时任务，曾卡在 7/2 → 明细 retail_detail 实时但汇总滞后 → bot 误报"今天无数据"。skill 已注明 retail_detail 实时、汇总有延迟。/compute 定时聚合待做。
 - **模型延迟**：DeepSeek-V4-Flash 经 wishub 单次 1-12s + 一个排名问题跑十几轮往返（疑似推理模型），数据查询场景偏慢；换非推理快模型才能根治。
 
@@ -572,21 +573,43 @@ WHERE departments ?| current_setting('request.jwt.claims.departments')
 
 ## 七、外部服务集成
 
-### 7.1 企业微信
+### 7.1 企业微信（三应用隔离，2026-07-07）
 
-**配置**：
-- Corp ID：`ww8252c1eee248867c`
-- Agent ID：`1000008`
-- Secret：`WECOM_SECRET` / `WECOM_CONTACTS_SECRET`
+同一 corp（`ww8252c1eee248867c`）下三个自建应用，职责隔离：
 
-**功能**：
-| 功能 | API | 状态 |
-|------|-----|------|
-| 登录 OAuth | `/cgi-bin/oauth2/authorize` | ✅ |
-| 用户信息 | `/cgi-bin/user/getuserinfo` | ✅ |
-| 部门列表 | `/cgi-bin/department/list` | ✅ |
-| 用户列表 | `/cgi-bin/user/list` | ✅ |
-| 消息推送 | `/cgi-bin/message/send` | ✅ |
+| 应用 | 可见范围 | 用途 | secret |
+|---|---|---|---|
+| **App A · 报表应用**（Agent 1000008） | 仅有权限的人 | OAuth 登录 + 报表页展示（软门禁） | `WECOM_SECRET` |
+| **App B · 同步/通知应用**（新建） | **全部成员** + 通讯录读取 | ① 通讯录全量同步 ② 统一消息通知 | `WECOM_OPS_SECRET` / `WECOM_OPS_AGENT_ID` |
+| **App C · OpenClaw bot** | 按需 | OpenClaw 对话 channel（收发 DM） | openclaw 容器 env（不在 web 管辖） |
+
+- App A 可见范围 = 报表授权人，作报表访问软门禁；App B 全员可见 + 通讯录读取权限（同步全量的**前提**，否则 `department/list`、`user/list` 只返可见范围子集）。
+- 历史 `WECOM_CONTACTS_SECRET` 已废（代码从未读取，死配置已清）。
+
+**功能矩阵：**
+| 功能 | API | 走哪个应用 | 状态 |
+|------|-----|-----------|------|
+| 登录 OAuth | `/cgi-bin/oauth2/authorize` | App A | ✅ |
+| 用户信息 | `/cgi-bin/auth/getuserinfo` | App A | ✅ |
+| 通讯录同步 | `/cgi-bin/department/list`、`/cgi-bin/user/list` | App B | ✅（全量） |
+| 消息通知（统一） | `/cgi-bin/message/send` | App B（`functions/wecom-notify`） | ✅ |
+| OpenClaw 对话 | 回调收消息 + 主动消息 | App C | ✅ |
+
+### 7.1.1 统一消息通知服务（`functions/wecom-notify`，2026-07-07）
+
+所有系统告警/通知收口到一个 edge function，用 App B 发送。凭据（App B secret）单点存于 function secret。
+
+```
+web（scheduler / collect-lemeng）─┐  AGENT_API_KEY   ┌─────────────────┐  WECOM_OPS_SECRET  ┌─────────┐
+OpenClaw（主动通知）──────────────┴─ POST /functions/wecom-notify ─►│ gettoken(App B) │─────────────────────►│ 企微 App B│ → 员工
+                                  {agent_api_key, content, title?,   │ message/send    │                     └─────────┘
+                                   touser?, msgtype?}                └─────────────────┘
+```
+
+- **接口**：`POST /functions/wecom-notify`，body `{ agent_api_key, content, title?, touser?, msgtype? }`，鉴权 `agent_api_key === AGENT_API_KEY`。
+- **默认收件人**：secret `NOTIFY_DEFAULT_TUSERS`（`|` 分隔），替代历史写死的单 `ZhangDuo`。
+- **调用方**：web `notifyWecom`（薄客户端，经 `@insforge/sdk` invoke）、OpenClaw 主动通知（复用 `AGENT_API_KEY`）。
+- **限**：token 每次现取（告警量低，可接受）；InsForge 挂则告警发不出（其挂即大故障）。
 
 ### 7.2 乐檬数据源
 
@@ -694,6 +717,8 @@ docker exec deploy-postgres-1 psql -U postgres -d insforge -c "<SQL>"
 | OOS 存储 | 按品牌分区 `retail_detail/{company_id}/{date}/` | 2026-07-04 |
 | 零售明细采集模式 | 当天数据、8-24 点每 5 分钟增量 + 每小时全量核对 | 2026-07-04 |
 | scheduler 自初始化 | instrumentation `register()` 启动时初始化（globalThis 单例） | 2026-07-04 |
+| 企微应用拓扑 | 三应用隔离：报表/同步通知/bot 各一 | 2026-07-07 |
+| 统一通知服务 | edge function `wecom-notify`（App B，凭据单点） | 2026-07-07 |
 
 ---
 
