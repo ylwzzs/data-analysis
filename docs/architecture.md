@@ -584,6 +584,7 @@ WHERE departments ?| current_setting('request.jwt.claims.departments')
 | **App C · OpenClaw bot** | 按需 | OpenClaw 对话 channel（收发 DM） | openclaw 容器 env（不在 web 管辖） |
 
 - App A 可见范围 = 报表授权人，作报表访问软门禁；App B 全员可见 + 通讯录读取权限（同步全量的**前提**，否则 `department/list`、`user/list` 只返可见范围子集）。
+- **App B「企业可信 IP」必须加服务器出口 IP**（新建应用默认空，2026-07-07 踩坑）：否则 `department/list`、`user/list`、`message/send` 从服务器调全报 `errcode 60020 not allow to access from your ip`（通讯录同步 + 统一通知都吃这个限制，App A 早加过所以无感）。当前服务器出口 IP `113.249.120.84`。**加新企微应用必做**。
 - 历史 `WECOM_CONTACTS_SECRET` 已废（代码从未读取，死配置已清）。
 
 **功能矩阵：**
