@@ -1,47 +1,30 @@
 // web/lib/notify.ts
-// 企微告警通知
+// 企微告警通知 —— 薄客户端：统一走 functions/wecom-notify（架构文档 §7.1.1）。
+// App B secret 单点存于 function secret；web 仅持 AGENT_API_KEY 做调用鉴权（compose 注入 web 容器）。
+// notifyWecom(title, content) 签名不变，scheduler / collect-lemeng 调用点无需改动。
+import { insforge } from "@/lib/insforge";
 
 export async function notifyWecom(title: string, content: string) {
-  const corpid = process.env.WECOM_CORP_ID;
-  const secret = process.env.WECOM_SECRET;
-  const agentid = process.env.WECOM_AGENT_ID;
-
-  if (!corpid || !secret || !agentid) {
-    console.warn('[notifyWecom] Missing WeChat work credentials');
+  const apiKey = process.env.AGENT_API_KEY;
+  if (!apiKey) {
+    console.warn("[notifyWecom] Missing AGENT_API_KEY（compose 未注入 web 容器？）");
     return;
   }
-
   try {
-    // 获取 access_token
-    const tokenRes = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${corpid}&corpsecret=${secret}`);
-    const tokenData = await tokenRes.json();
-
-    if (tokenData.errcode !== 0) {
-      console.error('[notifyWecom] Failed to get token:', tokenData.errmsg);
+    const { data, error } = await insforge.functions.invoke("wecom-notify", {
+      method: "POST",
+      body: { agent_api_key: apiKey, title, content, msgtype: "markdown" },
+    });
+    if (error) {
+      console.error("[notifyWecom] invoke error:", error);
       return;
     }
-
-    const accessToken = tokenData.access_token;
-
-    // 发送应用消息
-    const sendRes = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=${accessToken}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        touser: 'ZhangDuo',
-        msgtype: 'markdown',
-        agentid: parseInt(agentid),
-        markdown: { content: `### ${title}\n${content}` },
-      }),
-    });
-
-    const sendData = await sendRes.json();
-    if (sendData.errcode !== 0) {
-      console.error('[notifyWecom] Failed to send:', sendData.errmsg);
+    if (data && data.ok) {
+      console.log(`[notifyWecom] sent to ${data.sent_to}`);
     } else {
-      console.log('[notifyWecom] Notification sent');
+      console.error("[notifyWecom] send failed:", data);
     }
   } catch (err: any) {
-    console.error('[notifyWecom] Error:', err.message);
+    console.error("[notifyWecom] Error:", err.message);
   }
 }
