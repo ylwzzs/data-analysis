@@ -1,7 +1,7 @@
 // functions/wecom-sync-contacts/index.js
 // 企微通讯录同步：获取部门列表 + 用户列表，upsert 到数据库。
 // 定时执行（每日）或手动触发。
-// 所需 secrets：WECOM_CORP_ID / WECOM_SECRET / ANON_KEY
+// 所需 secrets：WECOM_CORP_ID / WECOM_OPS_SECRET / ANON_KEY（App B 全员可见，同步全量）
 // 注意：InsForge OSS runtime 用 CommonJS + 全局注入（createClient、Deno）。
 
 module.exports = async function (req) {
@@ -23,10 +23,10 @@ module.exports = async function (req) {
   }
 
   const corpId = Deno.env.get("WECOM_CORP_ID");
-  const corpSecret = Deno.env.get("WECOM_SECRET");
+  const corpSecret = Deno.env.get("WECOM_OPS_SECRET");
 
   if (!corpId || !corpSecret) {
-    return json({ error: "WECOM_CORP_ID/WECOM_SECRET secrets not set" }, 500);
+    return json({ error: "WECOM_CORP_ID/WECOM_OPS_SECRET secrets not set" }, 500);
   }
 
   try {
