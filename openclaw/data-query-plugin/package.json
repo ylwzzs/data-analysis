@@ -1,0 +1,21 @@
+{
+  "name": "openclaw-plugin-data-query",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "Retail data query tool — trusted wecom userid is injected per turn and forwarded to the agent-query gateway, which enforces per-user row/column permissions (RLS + cost masking).",
+  "files": [
+    "dist",
+    "skills",
+    "openclaw.plugin.json",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "openclaw": ">=2026.5.17"
+  },
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ]
+  }
+}

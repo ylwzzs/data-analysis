@@ -1,0 +1,22 @@
+{
+  "id": "data-query",
+  "name": "Retail Data Query",
+  "description": "零售数据查询工具。携带可信企微 userid 转发到 agent-query 网关，按用户权限（门店行级 + 成本列级）返回数据。配套 retail-query skill 教模型何时/如何查询。",
+  "version": "0.1.0",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  },
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": {
+    "tools": [
+      "query_retail_data"
+    ]
+  },
+  "skills": [
+    "./skills"
+  ]
+}

@@ -59,6 +59,10 @@ services:
       TZ: Asia/Shanghai
       # 模型提供商 API Key（自定义 wishub）
       WISHUB_API_KEY: ${WISHUB_API_KEY:-}
+      # 智能问数：data-query 插件 → agent-query 网关的共享密钥 + 网关地址
+      # （架构文档 §4.3；值同 deploy/.env 的 AGENT_API_KEY，与 function secret 同源）
+      AGENT_API_KEY: ${AGENT_API_KEY:-}
+      AGENT_QUERY_URL: http://insforge:7130/functions/agent-query
     volumes:
       - "../openclaw/state:/home/node/.openclaw"
     cap_drop:

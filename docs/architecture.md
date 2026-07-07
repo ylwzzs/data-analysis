@@ -396,7 +396,8 @@ DuckDB /query〔改造：每请求独立连接 + AGENT_API_KEY〕
 **架构选型（探针实测确认）：native tool-plugin，非远程 MCP server。**
 - OpenClaw 把企微可信 userid 注入 **native plugin tool 的 `toolContext.requesterSenderId`**（探针实测：用户张铎 → `requesterSenderId="ZhangDuo"`；同上下文还有 `messageChannel="wecom"`、`sessionKey="agent:main:wecom:default:direct:zhangduo"`、`deliveryContext.to="wecom:ZhangDuo"`、`sandboxed`）。
 - **核心不把 sender 透传给 `mcp.servers`**（`x-openclaw-*` header 全表无 userid；`x-openclaw-wecom-userid` 是 wecom 插件专给自己 MCP server 加的）。故 query tool **必须**是 native plugin，不能是远程 MCP。
-- `defineToolPlugin` 简单 `execute(params, config, {api,signal,toolCallId,onUpdate})` 第三参 context **无 sender**；**必须用 factory 形式** `api.registerTool((toolContext) => toolDef)`（每轮调用，非启动期）才能拿 `toolContext.requesterSenderId`。
+- `defineToolPlugin` 简单 `execute(params, config, {api,signal,toolCallId,onUpdate})` 第三参 context **无 sender**；**必须用 factory 形式**才能拿 `toolContext.requesterSenderId`。
+- **注册形式（实测定稿）**：`definePluginEntry`（from `openclaw/plugin-sdk/plugin-entry`）+ `api.registerTool(factory, {name:"query_retail_data"})`，且 **factory 的 return 必须带 `name`**（`return {name, description, parameters, execute}`）。name 只放第二参数 → 静态 `inspect` 有 names 但运行时报 `plugin tool is malformed: missing non-empty name` → 工具**间歇对模型不可用** → 模型不调工具直接编造数据。factory 每 turn 跑，`ctx.requesterSenderId` 当轮可得。
 
 **组件（`openclaw/data-query-plugin/`，入仓 + `openclaw plugins install -l` link 安装）：**
 - `package.json`（`openclaw.extensions:["./index.js"]`）+ `openclaw.plugin.json`（`id`、`contracts.tools:["query_retail_data"]`、`activation.onStartup:true`）+ `index.js`。
@@ -412,12 +413,30 @@ DuckDB /query〔改造：每请求独立连接 + AGENT_API_KEY〕
   → 网关 get_user_perms(userId) → 行/列过滤 → 返回
 ```
 - **全局**：插件 `activation.onStartup` + 装入即进 `plugins.allow` → 所有企微用户开箱可用，无需逐人配。
-- **按人鉴权**：userId 由 OpenClaw 从企微可信注入，用户端零配置；改权限=改 DB（`org_departments.branch_nums/can_see_cost`），不动 OpenClaw。
+- **按人鉴权**：userId 由 OpenClaw 从企微可信注入，用户端零配置；改权限=改 DB，不动 OpenClaw。**两层权限（迁移 015 部门制 + 迁移 016 按人 override）**：
+  - ① **部门制（默认）**：`org_departments.branch_nums/can_see_cost`，`get_user_perms` 按用户部门聚合（并集 / 任一 true）。
+  - ② **按人 override（优先）**：`retail_query_user_perms(wecom_id, branch_nums, can_see_cost)`，`get_user_perms` **先查它、命中即用**（优先于部门聚合），用于不在任何已同步部门里的个人授权（如 YangWei——bot 企微应用通讯录可见范围只到总经办，同步拉不到他；且给他部门设权限会波及同事，不是"单独开"）。表无 RLS/GRANT，仅经 SECURITY DEFINER 的 `get_user_perms` RPC 可读，不对 PostgREST 直接暴露。
 - **不千人千面**：权限数据在 DB，OpenClaw 侧零用户态；`AGENT_API_KEY` 留 openclaw 容器 env（`openclaw/.env`，compose `env_file` 注入），用户/LLM 均不可见。
 
 **网络**：openclaw 容器在 `deploy_insforge-network`，直连 `insforge:7130`（内网，已实测 http=302），网关 URL 用 `http://insforge:7130/functions/agent-query`（不走公网/nginx）。
 
-**部署注意（探针踩坑）**：`openclaw plugins install -l <path>` link 安装会写 `openclaw.json` 的 `plugins.{entries,allow,load.paths}` + 需重启容器加载；卸载 `uninstall --force` 会残留 `load.paths` 指向已删目录 → 配置无效、gateway 崩溃循环。卸后必须清 `load.paths` 或 `openclaw doctor --fix`。
+**部署注意（探针踩坑）**：`openclaw plugins install -l <path>` link 安装会写 `openclaw.json` 的 `plugins.{entries,allow,load.paths}` + 需重启容器加载；卸载 `uninstall --force` 会残留 `load.paths` 指向已删目录 → 配置无效、gateway 崩溃循环。卸后必须清 `load.paths` 或 `openclaw doctor --fix`。openclaw/ 目录 **GHA 不部署**（rsync 只推 web/scripts/database/deploy/functions/services），插件改动走手动 SSH（scp 到 `openclaw/state/plugins/` + `install -l` + restart）。
+
+**实测运维要点（2026-07-05 落地）：**
+- **wecom_mcp 拦截（已修）**：wecom 插件注册了通用 MCP 代理工具 `wecom_mcp`（调企微后台 MCP Server）。模型会把 `query_retail_data` 误当 `wecom_mcp` 的 category/method → `846610 unsupported mcp biz type` → 疯狂重试（曾致 10 分钟卡死）。skill 写"禁止 wecom_mcp"不可靠（模型非确定性）。**根治：`openclaw.json` 加 `tools.deny:["wecom_mcp"]` 硬禁**（wecom_mcp 是 tool，禁它不影响 wecom channel 收发消息）。
+- **编造铁律（写进 SKILL.md）**：数据机器人头号风险是模型编造看似真实的数据。skill 最高铁律：「数据只能来自工具返回；工具没调/报错/空/无权限时必须如实说，**绝对禁止编造数字**」。malformed 导致工具不可用时模型会幻觉作答——这是触发该铁律的根因之一。
+- **🔴 插件 execute 签名（端到端阻塞坑，2026-07-05 实测）**：OpenClaw 调 native plugin tool 的签名是 **`execute(toolCallId, params, signal, onUpdate)`**——**第一个参数是 toolCallId（id 字符串），第二个才是模型传的参数对象**（runtime `agent-tools.before-tool-call.js:1510`、内置工具全是 `execute(_id, params)`）。写插件**必须从第二个参数取值**：`execute: (toolCallId, params) => ...`。若误用 `(args) =>`，会把 toolCallId 当 params → 参数恒 undefined → 网关收空 body 每次必现 `missing sql/userId`（曾两度误判为模型编造，实为签名错位吃掉了模型已正确传入的 SQL）。
+- **AGENT_API_KEY 注入**：openclaw 容器经 compose `environment: AGENT_API_KEY: ${AGENT_API_KEY:-}` + `AGENT_QUERY_URL` 注入，与 function secret 同源（deploy/.env）。
+- **汇总表滞后（已临时补，定时聚合待做）**：`report_daily_sales` 等靠 `/compute`（`services/server.js`，按 `report_definitions` 配置）**按需手动**聚合、无定时任务，曾卡在 7/2 → 明细 retail_detail 实时但汇总滞后 → bot 误报"今天无数据"。skill 已注明 retail_detail 实时、汇总有延迟。/compute 定时聚合待做。
+- **模型延迟**：DeepSeek-V4-Flash 经 wishub 单次 1-12s + 一个排名问题跑十几轮往返（疑似推理模型），数据查询场景偏慢；换非推理快模型才能根治。
+
+**🟢 已修复：共享 session 跨用户数据泄漏（session.dmScope 隔离）**
+
+**根因**：OpenClaw 的 DM 会话作用域 `session.dmScope` 默认 `main`——所有 wecom 私聊消息塌缩进同一个共享 session `agent:main:main`（这是 OpenClaw **文档化的默认行为，非 bug**；其安全文档明确警告：多用户 bot 必须改）。wecom 插件虽传 per-user sessionKey，核心按 `dmScope=main` 全部塌缩。实测 `sessions.json` 仅 `agent:main:main` 一个 key，`usageFamilySessionIds` 把 7 个 trajectory 文件（多用户消息 + 工具返回交错、含真实店名）捆成一个共享族。无权限用户 YangWei 的模型上下文里**真的出现**了全权限用户 ZhangDuo 查到的真实店名/数字，模型据此「编」出看似真实的排名。**网关层 RLS（§4.2）扛住了**（YangWei 网关侧 `user_not_found`、0 审计行）——**泄漏在 agent session 层**，上下文串台，网关挡不住。
+
+**修复**：`session.dmScope` 设为 **`per-channel-peer`**（每个 channel+sender 一个独立 session；OpenClaw 安全文档针对「multiple people can DM the bot」场景的推荐值）。合法值：`main`（共享，默认/泄漏源）/ `per-peer`（每 sender 跨同类型 channel 一个）/ `per-channel-peer`（每 channel+sender 一个，**本场景用**）/ `per-account-channel-peer`（多账号再加 account 维度）。prod 改法：`openclaw config set session.dmScope per-channel-peer` → 重启 openclaw → 清掉被污染的旧 `agent:main:main` session（整 `sessions/` 目录隔离备份后清空，让每用户从干净状态开始；注：`sessions cleanup --fix-dm-scope` 是反向——回 `main` 时清 peer-keyed 行，不适用本方向，故整目录隔离）。
+
+**不影响**：可信 userid 注入（`requesterSenderId`）+ §4.2 网关 RLS 是独立机制，dmScope 只管 agent 上下文分组、不改鉴权——每用户仍被网关按自己权限过滤/拒绝。可选加固：policy `ingress.session.requireDmScope=per-channel-peer` 防回退（`policy.md`）。
 
 ---
 
