@@ -7,6 +7,7 @@ import { createClient } from '@insforge/sdk';
 import { collectOnce, getYesterdayChina, getTodayChina, CollectResult } from './collect';
 import { collectItems, CollectItemsResult } from './collect-items';
 import { notifyWecom } from './notify';
+import { runServiceDownBucket, runCollectTokenBucket, runHourlyBucket, runDailyBucket } from './monitor/runtime';
 
 const INSFORGE_API_BASE = process.env.INSFORGE_API_BASE!;
 const INSFORGE_API_KEY = process.env.INSFORGE_API_KEY!;
@@ -45,6 +46,7 @@ export async function ensureSchedulerInitialized(): Promise<boolean> {
 
   // 通讯录全量兜底（平台基础设施，独立于 collect_tasks；先注册，不依赖采集任务查询结果/是否为空）
   registerContactSyncJob();
+  registerMonitorJobs();
 
   const client = createClient({ baseUrl: INSFORGE_API_BASE, anonKey: INSFORGE_API_KEY });
 
@@ -391,6 +393,32 @@ function registerContactSyncJob() {
   }, { timezone: 'Asia/Shanghai' });
   scheduledJobs.set(JOB_KEY, job);
   console.log('[scheduler] 注册通讯录兜底同步 (17 3 * * *, Asia/Shanghai)');
+}
+
+/**
+ * 注册监控扫描桶（架构 §8.1）。4 个节奏：
+ *   每分钟 service_down；每5分钟 collect_fail/request_fail/token_expire；
+ *   每小时 data_freshness/contact_sync；每日 data_integrity。
+ * Phase A 仅前两桶有 evaluator，后两桶空跑（loadRules 空），Phase B 填。
+ */
+function registerMonitorJobs() {
+  const specs: Array<[string, string, () => Promise<void>]> = [
+    ['__monitor_service', '* * * * *', runServiceDownBucket],
+    ['__monitor_collect_token', '*/5 * * * *', runCollectTokenBucket],
+    ['__monitor_hourly', '0 * * * *', runHourlyBucket],
+    ['__monitor_daily', '0 3 * * *', runDailyBucket],
+  ];
+  for (const [key, expr, fn] of specs) {
+    if (scheduledJobs.has(key)) continue;
+    if (!cron.validate(expr)) continue;
+    const job = cron.schedule(expr, async () => {
+      if (runningTasks.has(key)) return;
+      runningTasks.add(key);
+      try { await fn(); } finally { runningTasks.delete(key); }
+    }, { timezone: 'Asia/Shanghai' });
+    scheduledJobs.set(key, job);
+    console.log(`[scheduler] 注册监控桶 ${key} (${expr})`);
+  }
 }
 
 /**
