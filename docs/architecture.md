@@ -593,7 +593,7 @@ WHERE departments ?| current_setting('request.jwt.claims.departments')
 | 登录 OAuth | `/cgi-bin/oauth2/authorize` | App A | ✅ |
 | 用户信息 | `/cgi-bin/auth/getuserinfo` | App A | ✅ |
 | 通讯录全量同步（兜底） | `/cgi-bin/department/list`、`/cgi-bin/user/list` | App B | ✅（每日 03:17 全量兜底，详见 §7.1.2） |
-| 通讯录实时同步 | `change_contact` 回调（create/update/delete_user、create/update/delete_party） | **通讯录同步功能（非应用）** | 🆕 `functions/wecom-contacts-webhook`（补全既有半成品，详见 §7.1.2） |
+| 通讯录实时同步 | `change_contact` 回调（create/update/delete_user、create/update/delete_party） | **通讯录同步功能（非应用）** | 🆕 `web/app/api/wecom-contacts-webhook/route.ts`（详见 §7.1.2） |
 | 消息通知（统一） | `/cgi-bin/message/send` | App B（`functions/wecom-notify`） | ✅ |
 | OpenClaw 对话 | 回调收消息 + 主动消息 | App C | ✅ |
 
@@ -615,37 +615,41 @@ OpenClaw（主动通知）──────────────┴─ POST 
 
 ### 7.1.2 通讯录实时同步（回调 + 兜底全量，2026-07-08）
 
-全量拉取延迟大（且此前无自动调度）；企微"邀请→微信昵称→实名"等字段漂移需实时纠正。**单一机制都不够**：回调可能丢消息、且 `update_user` 不保证覆盖所有字段变更；全量有延迟。故采用**回调（实时增量）+ 每日全量（兜底自愈）双轨**，互为补偿。实现上**补全既有半成品 `functions/wecom-contacts-webhook`**（其 AES 解密原为 TODO 空壳、GET 返未解密 echostr、delete 为硬删——从未真正工作），非新建。
+全量拉取延迟大（且此前无自动调度）；企微"邀请→微信昵称→实名"等字段漂移需实时纠正。**单一机制都不够**：回调可能丢消息、且 `update_user` 不保证覆盖所有字段变更；全量有延迟。故采用**回调（实时增量）+ 每日全量（兜底自愈）双轨**，互为补偿。
+
+> ⚠️ **回调接收走 web/api，不走 InsForge function**（2026-07-08 踩坑）：InsForge gateway(7130) 对 function 请求 body 按 content-type 协商，**raw text/XML 被吞成 `{}`**（仅 JSON 正常），所有 function 共用此 gateway。企微通讯录回调是 XML，经 function 收不到事件。故回调接收用 `web/app/api/wecom-contacts-webhook/route.ts`（Next.js Route Handler，标准 Web Request API 读 raw body）。详见 memory `insforge-function-body-limit`。
 
 ```
 企微通讯录变更（入职/离职/改部门/部门变更）
    │ POST 加密XML（msg_signature + timestamp + nonce + <Encrypt>）   Token / EncodingAESKey
    ▼                                                                  仅企微与系统知晓
-https://data.shanhaiyiguo.com/functions/wecom-contacts-webhook
+https://data.shanhaiyiguo.com/api/wecom-contacts-webhook   ← nginx location → web:3000（不经 InsForge）
+   │ web/app/api/wecom-contacts-webhook/route.ts（Next.js Route Handler, Node runtime）
    ├─ GET  企微 URL 验证：校签名 → AES 解密 echostr → 返明文
-   ├─ POST 事件：校签名 → AES 解密 → 解析 XML → 按 ChangeType 分派：
+   ├─ POST 事件：await request.text() 读 raw XML → 校签名 → AES 解密 → 解析 → 按 ChangeType 分派：
    │     create/update_user  → user/get(userid) 拉权威快照 → upsert org_users(is_active=true)
    │     delete_user         → org_users SET is_active=false（人已删，无法 get）
    │     create/update_party → upsert org_departments
    │     delete_party        → org_departments SET is_active=false
    │   5s 内返 "success"
    ▼
-org_users / org_departments（is_active 软删除）
+org_users / org_departments（is_active 软删除）— web 经 @insforge/sdk + ANON_KEY 写（不签 JWT，web 可信服务端）
 
 每日 03:17（web instrumentation cron）
    ▼
-functions/wecom-sync-contacts（改造：兜底全量）
+functions/wecom-sync-contacts（兜底全量；JSON 调用，不受 body 限制）
    全量 user/list → upsert + 按"企微现状"对齐 is_active（企微没有的人标离职）→ 纠正一切回调漏的漂移
 ```
 
-- **加解密**（企微 WXBizMsgCrypt 协议，Deno Web Crypto 手写零依赖）：AES key = `base64decode(EncodingAESKey+"=")`（32B），IV = key 前 16B，AES-256-CBC + PKCS7；解密结构 `16B随机 + 4B长度 + msg + receiveid`，校验 receiveid == `WECOM_CORP_ID` 防伪造；签名 `sha1(sort([token,timestamp,nonce,encrypt]))` == msg_signature。POST body 是 `text/xml`，手解析（事件结构固定）。
+- **加解密**（企微 WXBizMsgCrypt 协议，Node `crypto.subtle`）：AES key = `base64decode(EncodingAESKey+"=")`（32B），IV = key 前 16B，AES-256-CBC（`subtle.decrypt` **已自动去 PKCS7 padding，勿再手动 unpad**——2026-07-08 踩坑）；解密结构 `16B随机 + 4B长度 + msg + receiveid`，校验 receiveid == `WECOM_CORP_ID` 防伪造；签名 `sha1(sort([token,timestamp,nonce,encrypt]))` == msg_signature。POST body 是 `text/xml`，`request.text()` 读 raw + 手解析。
 - **回调只当通知，字段以 `user/get` 快照为准**：`update_user` 回调只带变化字段且不保证触发（典型如"微信昵称→实名"），故 create/update_user 一律补 `user/get(userid)` 拉全量再 upsert。`delete_user` 例外（直接软删）。
 - **name 一致性**：name 永远以最新同步值 upsert 覆盖，不区分昵称/实名（判断不可靠）；全量快照是最终一致性来源，纠正回调漏的一切字段漂移。
 - **软删除**：`org_users` / `org_departments` 加 `is_active BOOLEAN DEFAULT TRUE`，离职 / 删部门标 false 保留行（保历史 + 不破坏 `retail_query_user_perms` 关联，登录拦已离职）。
-- **secrets**：复用既有 `WECOM_TOKEN` / `WECOM_ENCODING_AES_KEY`（企微后台「通讯录同步 → API 接口同步」生成；回调验证专用，非 API 调用）。
-- **幂等 + 5s 超时**：upsert 与 `SET is_active` 天然幂等，企微重试安全（回调不保证 at-least-once 不丢）；处理 < 600ms（user/get < 300ms + DB upsert），5s 内必返。
-- **回调 URL**：`https://data.shanhaiyiguo.com/functions/wecom-contacts-webhook`（企微后台「通讯录同步」填，会先 GET 验证才允许保存）。
-- **限**：依赖企微回调可达 + 企微「通讯录同步」功能已开启；回调漏的消息靠每日全量兜底（最长次日纠正）。
+- **secrets（注入 web 容器 compose env）**：`WECOM_TOKEN` / `WECOM_ENCODING_AES_KEY`（回调验证解密，企微后台「通讯录同步→API接口同步」生成）/ `WECOM_CORP_ID`（已有）/ `WECOM_OPS_SECRET`（user/get，App B）。route 经 `process.env` 读。
+- **nginx 路由**：加 `location /api/wecom-contacts-webhook → web:3000`（前缀长于 `/api` 兜底，nginx 最长前缀匹配优先），否则 `/api` 兜底送到 insforge:7130 又踩 body 限制。
+- **幂等 + 5s 超时**：upsert 与 `SET is_active` 天然幂等，企微重试安全；处理 < 600ms，5s 内必返。
+- **回调 URL**：`https://data.shanhaiyiguo.com/api/wecom-contacts-webhook`（企微后台「通讯录同步」填，会先 GET 验证才允许保存）。
+- **限**：依赖企微回调可达 + 企微「通讯录同步」功能已开启；回调漏的消息靠每日全量兜底（最长次日纠正）。`functions/wecom-contacts-webhook` 废弃（逻辑移至 web/api）。
 
 ### 7.2 乐檬数据源
 
