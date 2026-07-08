@@ -69,6 +69,9 @@ export async function ensureSchedulerInitialized(): Promise<boolean> {
       registerTask(task);
     }
 
+    // 通讯录全量兜底（平台基础设施，独立于 collect_tasks）
+    registerContactSyncJob();
+
     state.initialized = true;
     console.log('[scheduler] 调度器初始化完成');
     return true;
@@ -356,6 +359,38 @@ export async function reloadScheduler() {
   // 重置初始化标记，重新初始化
   state.initialized = false;
   await ensureSchedulerInitialized();
+}
+
+/**
+ * 注册通讯录全量兜底同步（平台基础设施，独立于 collect_tasks）。
+ * 每日 03:17 调 functions/wecom-sync-contacts 全量自愈（架构 §7.1.2）。
+ */
+function registerContactSyncJob() {
+  const JOB_KEY = '__contact_sync';
+  if (scheduledJobs.has(JOB_KEY)) return;
+  if (!cron.validate('17 3 * * *')) return;
+  const job = cron.schedule('17 3 * * *', async () => {
+    if (runningTasks.has(JOB_KEY)) {
+      console.warn('[scheduler] 通讯录同步已在运行，跳过本次触发');
+      return;
+    }
+    runningTasks.add(JOB_KEY);
+    try {
+      console.log('[scheduler] ⏰ 通讯录全量兜底同步触发');
+      const resp = await fetch(`${INSFORGE_API_BASE}/functions/wecom-sync-contacts`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${INSFORGE_API_KEY}` },
+      });
+      const data = await resp.json().catch(() => ({}));
+      console.log('[scheduler] 通讯录同步结果:', resp.status, data);
+    } catch (e: any) {
+      console.error('[scheduler] 通讯录同步异常:', e.message);
+    } finally {
+      runningTasks.delete(JOB_KEY);
+    }
+  }, { timezone: 'Asia/Shanghai' });
+  scheduledJobs.set(JOB_KEY, job);
+  console.log('[scheduler] 注册通讯录兜底同步 (17 3 * * *, Asia/Shanghai)');
 }
 
 /**
