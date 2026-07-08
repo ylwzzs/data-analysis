@@ -37,7 +37,7 @@ export interface EvalResult {
 export interface EvalDeps {
   now: Date;
   probe: (url: string, opts?: { timeoutMs?: number; method?: string }) => Promise<ProbeOutcome>;
-  getCredentialToken: (sourceId: number) => Promise<string | null>;
+  getCredentialToken: (sourceId: string) => Promise<string | null>;
 }
 
 export interface ProbeOutcome {

@@ -2,9 +2,9 @@ import type { Evaluator, MonitorRule, EvalDeps, EvalResult } from '../types';
 import { decodeJwtPayload } from '../jwt';
 
 // 乐檬 token 过期前置告警：读 JWT exp claim，算剩余小时，remain < before_hours(默认 24h) 即 firing
-// rule.target = source_id（字符串）；alert_key = token:<source_id>
+// rule.target = source_id（UUID 字符串，data_sources.id）；alert_key = token:<source_id>
 export const evalTokenExpire: Evaluator = async (rule: MonitorRule, deps: EvalDeps): Promise<EvalResult> => {
-  const sourceId = Number(rule.target);
+  const sourceId = rule.target ?? '';
   const beforeHours = Number(rule.threshold?.before_hours ?? 24);
   const alertKey = `token:${sourceId}`;
 

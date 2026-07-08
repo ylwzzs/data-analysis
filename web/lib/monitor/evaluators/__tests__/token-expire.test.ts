@@ -10,11 +10,14 @@ const tokenWithExp = (expSec: number) => {
   return `h.${payload}.s`;
 };
 
-const rule = (beforeHours: number, sourceId: number): MonitorRule => ({
-  id: 1, name: 'token', check_type: 'token_expire', target: String(sourceId), threshold: { before_hours: beforeHours },
+const rule = (beforeHours: number, sourceId: string): MonitorRule => ({
+  id: 1, name: 'token', check_type: 'token_expire', target: sourceId, threshold: { before_hours: beforeHours },
   severity: 'critical', touser: '@default', template: '乐檬-{brand} token 剩 {remain_hours}h',
   suppress_window_seconds: 3600, enabled: true,
 });
+
+// source_id 是 UUID（data_sources.id）
+const SRC = 'a0000000-0000-0000-0000-000000000001';
 
 const deps = (token: string | null): EvalDeps => ({
   now,
@@ -25,27 +28,27 @@ const deps = (token: string | null): EvalDeps => ({
 describe('evalTokenExpire', () => {
   it('剩 2h，阈值 24h → firing', async () => {
     const exp = Math.floor(now.getTime() / 1000) + 2 * 3600;
-    const r = await evalTokenExpire(rule(24, 3120), deps(tokenWithExp(exp)));
+    const r = await evalTokenExpire(rule(24, SRC), deps(tokenWithExp(exp)));
     expect(r.firing).toBe(true);
-    expect(r.alert_key).toBe('token:3120');
+    expect(r.alert_key).toBe(`token:${SRC}`);
     expect(r.context.remain_hours).toBeCloseTo(2, 0);
     expect(r.context.brand).toBe(3120);
   });
 
   it('剩 48h，阈值 24h → 不 firing', async () => {
     const exp = Math.floor(now.getTime() / 1000) + 48 * 3600;
-    const r = await evalTokenExpire(rule(24, 3120), deps(tokenWithExp(exp)));
+    const r = await evalTokenExpire(rule(24, SRC), deps(tokenWithExp(exp)));
     expect(r.firing).toBe(false);
   });
 
   it('无凭证 → 不 firing（context 标 missing），不误报', async () => {
-    const r = await evalTokenExpire(rule(24, 3120), deps(null));
+    const r = await evalTokenExpire(rule(24, SRC), deps(null));
     expect(r.firing).toBe(false);
     expect(r.context.missing).toBe(true);
   });
 
   it('token 无法解码 exp → 不 firing，context 标 undecodable', async () => {
-    const r = await evalTokenExpire(rule(24, 3120), deps('not-a-jwt'));
+    const r = await evalTokenExpire(rule(24, SRC), deps('not-a-jwt'));
     expect(r.firing).toBe(false);
     expect(r.context.undecodable).toBe(true);
   });
