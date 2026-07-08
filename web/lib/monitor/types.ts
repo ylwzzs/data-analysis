@@ -1,0 +1,51 @@
+// 监控告警体系共享类型（架构 §8.1）
+
+// v1 支持的检查类型；Phase B 会扩展后三类
+export type CheckType =
+  | 'service_down'
+  | 'token_expire'
+  | 'collect_fail'
+  | 'request_fail'
+  | 'data_freshness'
+  | 'data_integrity'
+  | 'contact_sync';
+
+export type Severity = 'critical' | 'high' | 'medium';
+
+// monitor_rules 行
+export interface MonitorRule {
+  id: number;
+  name: string;
+  check_type: CheckType;
+  target: string | null;
+  threshold: Record<string, any>;
+  severity: Severity;
+  touser: string | null;
+  template: string | null;
+  suppress_window_seconds: number;
+  enabled: boolean;
+}
+
+// evaluator 产出
+export interface EvalResult {
+  firing: boolean;
+  alert_key: string;
+  context: Record<string, any>; // 供模板渲染
+}
+
+// evaluator 依赖注入（engine 提供真实实现，测试提供 fake）
+export interface EvalDeps {
+  now: Date;
+  probe: (url: string, opts?: { timeoutMs?: number; method?: string }) => Promise<ProbeOutcome>;
+  getCredentialToken: (sourceId: number) => Promise<string | null>;
+}
+
+export interface ProbeOutcome {
+  ok: boolean;
+  status?: number;
+  latencyMs: number;
+  error?: string;
+}
+
+// evaluator 签名
+export type Evaluator = (rule: MonitorRule, deps: EvalDeps) => Promise<EvalResult>;
