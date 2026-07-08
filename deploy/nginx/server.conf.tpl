@@ -63,6 +63,17 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
+    # 企微通讯录回调（web/api，架构 §7.1.2）——最长前缀匹配优先于 /api 兜底 → web:3000
+    # 否则 /api 兜底送到 insforge:7130，raw XML body 被 gateway 吞成 {}
+    location /api/wecom-contacts-webhook {
+        proxy_pass http://web:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
     # ---------- InsForge API ----------
     location /api {
         proxy_pass http://insforge:7130;
