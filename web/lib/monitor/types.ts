@@ -31,6 +31,9 @@ export interface EvalResult {
   firing: boolean;
   alert_key: string;
   context: Record<string, any>; // 供模板渲染
+  // 可选：异常路径（如 token 缺失/不可解析）提供完整文案，覆盖 rule.template 渲染，
+  // 避免 {remain_hours} 这类占位符在异常下渲染成 undefined。
+  message?: string;
 }
 
 // evaluator 依赖注入（engine 提供真实实现，测试提供 fake）

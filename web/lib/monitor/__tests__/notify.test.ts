@@ -41,4 +41,15 @@ describe('dispatchAlert', () => {
     // 收件人解析不阻塞发送（notifyWecom 不收 touser，仅标题/正文）；这里只断言不抛错
     expect(notifyWecom).toHaveBeenCalled();
   });
+
+  it('result.message 存在时覆盖模板渲染（异常路径用完整文案，不走 {remain_hours} 模板）', async () => {
+    const res: EvalResult = {
+      firing: true, alert_key: 'token:x',
+      context: { remain_hours: 2 }, message: 'token 缺失，采集将失效',
+    };
+    await dispatchAlert(rule({ template: '剩 {remain_hours}h 后过期' }), res, { recovered: false });
+    const [, content] = (notifyWecom as any).mock.calls[0];
+    expect(content).toBe('token 缺失，采集将失效');
+    expect(content).not.toContain('remain_hours');
+  });
 });

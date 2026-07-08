@@ -41,15 +41,20 @@ describe('evalTokenExpire', () => {
     expect(r.firing).toBe(false);
   });
 
-  it('无凭证 → 不 firing（context 标 missing），不误报', async () => {
+  // token 缺失/不可用属于异常：必须 firing，否则引擎会把此前 active 的告警当"恢复"自动 resolve，
+  // 发误导性 ✅ 已恢复（曾发生：3120 credential 被清成 {} → 假恢复致盲）。
+  it('无凭证 → firing（token 缺失），带可读 message，不静默恢复', async () => {
     const r = await evalTokenExpire(rule(24, SRC), deps(null));
-    expect(r.firing).toBe(false);
+    expect(r.firing).toBe(true);
     expect(r.context.missing).toBe(true);
+    expect(r.message).toBeTruthy();
+    expect(r.message).toMatch(/缺失/);
   });
 
-  it('token 无法解码 exp → 不 firing，context 标 undecodable', async () => {
+  it('token 无法解码 exp → firing（不可用），带可读 message', async () => {
     const r = await evalTokenExpire(rule(24, SRC), deps('not-a-jwt'));
-    expect(r.firing).toBe(false);
+    expect(r.firing).toBe(true);
     expect(r.context.undecodable).toBe(true);
+    expect(r.message).toMatch(/无法解析|无效/);
   });
 });

@@ -20,7 +20,8 @@ export async function dispatchAlert(rule: MonitorRule, result: EvalResult, opts:
   const icon = opts.recovered ? '✅' : SEVERITY_ICON[rule.severity] ?? '🔴';
   const verb = opts.recovered ? '已恢复' : '告警';
   const title = `${icon} [${rule.severity}] ${rule.name} ${verb}`;
-  const content = renderTemplate(rule.template, result.context, `${rule.check_type}: ${result.alert_key}`);
+  // 异常路径（token 缺失/不可解析等）evaluator 会给完整 message，覆盖模板渲染，避免占位符渲染异常
+  const content = result.message ?? renderTemplate(rule.template, result.context, `${rule.check_type}: ${result.alert_key}`);
   const touser = resolveTouser(rule.touser);
   console.log(`[monitor] dispatch → ${touser || '(default)'}: ${title}`);
   await notifyWecom(title, content);

@@ -706,7 +706,7 @@ lemeng-datasource/
 **七个 check_type**（每个一个纯函数 evaluator：读数据源 → 比 threshold → 产出 firing/alert_key/context）：
 | check_type | 数据源 | 触发 |
 |---|---|---|
-| `token_expire` | `auth_credentials` JWT，解 payload `exp` | 剩余 < before_hours |
+| `token_expire` | `auth_credentials` JWT，解 payload `exp` | 剩余 < before_hours；token 缺失/无法解析也 firing（evaluator 给 `message` 覆盖模板，避免静默"恢复"致盲） |
 | `collect_fail` | `collect_logs` | 连续失败 ≥ consecutive |
 | `request_fail` | `external_request_logs` | 窗口失败率 > failure_rate |
 | `service_down` | 主动探活 web/duckdb/insforge/postgres/deno/openclaw（应用级，5s 超时） | 任一不可达 |

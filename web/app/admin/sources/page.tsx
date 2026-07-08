@@ -161,6 +161,7 @@ export default function DataSourcesPage() {
                 <label className="block text-sm font-medium mb-1">鉴权类型</label>
                 <select name="auth_type" className="w-full border rounded px-3 py-2">
                   <option value="token">Token</option>
+                  <option value="bearer">Bearer Token</option>
                   <option value="api_key">API Key</option>
                   <option value="oauth">OAuth</option>
                   <option value="basic">Basic Auth</option>
@@ -204,6 +205,8 @@ export default function DataSourcesPage() {
               const formData = new FormData(e.target);
               const credentials: Record<string, string> = {};
               formData.forEach((value, key) => {
+                // expires_at 走 auth_credentials 独立列，不混进 credential_data
+                if (key === 'expires_at') return;
                 credentials[key] = value.toString();
               });
 
@@ -219,11 +222,12 @@ export default function DataSourcesPage() {
               setEditingSource(null);
               fetchSources();
             }}>
-              {editingSource.auth_type === 'token' && (
+              {(editingSource.auth_type === 'token' || editingSource.auth_type === 'bearer') && (
                 <>
                   <div className="mb-4">
                     <label className="block text-sm font-medium mb-1">Token</label>
-                    <input name="token" className="w-full border rounded px-3 py-2" required />
+                    {/* 乐檬等 Bearer JWT 较长，用 textarea 方便粘贴/核对 */}
+                    <textarea name="token" rows={3} className="w-full border rounded px-3 py-2 font-mono text-xs" required />
                   </div>
                   <div className="mb-4">
                     <label className="block text-sm font-medium mb-1">过期时间</label>
