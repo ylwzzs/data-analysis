@@ -76,6 +76,7 @@ module.exports = async function (req) {
         name: d.name,
         parent_id: d.parentid ? String(d.parentid) : null,
         order_weight: d.order || 0,
+        is_active: true,
         synced_at: new Date().toISOString(),
       }));
       const { error: deptError } = await client.database
@@ -100,6 +101,7 @@ module.exports = async function (req) {
         mobile: u.mobile || null,
         email: u.email || null,
         avatar: u.avatar || null,
+        is_active: true,
         synced_at: new Date().toISOString(),
       });
     }
@@ -109,6 +111,46 @@ module.exports = async function (req) {
         .upsert(userRows, { onConflict: "wecom_id" });
       if (userError) {
         return json({ error: "upsert_users_failed", detail: userError }, 502);
+      }
+    }
+
+    // 6. 离职对齐：企微没有但库里 is_active=true 的 → 标离职（纠正回调漏的离职）
+    const syncedUserIds = new Set(userRows.map((r) => r.wecom_id));
+    const { data: activeUsers, error: activeErr } = await client.database
+      .from("org_users")
+      .select("wecom_id")
+      .eq("is_active", true);
+    if (!activeErr && activeUsers) {
+      const toDeactivate = activeUsers
+        .map((r) => r.wecom_id)
+        .filter((id) => !syncedUserIds.has(id));
+      if (toDeactivate.length > 0) {
+        const { error: deactErr } = await client.database
+          .from("org_users")
+          .update({ is_active: false })
+          .in("wecom_id", toDeactivate);
+        if (deactErr) console.error("[sync-contacts] deactivate users failed:", deactErr);
+        else console.log(`[sync-contacts] 标记离职 ${toDeactivate.length} 人:`, toDeactivate);
+      }
+    }
+
+    // 部门同理
+    const syncedDeptIds = new Set(deptRows.map((r) => r.id));
+    const { data: activeDepts, error: activeDeptErr } = await client.database
+      .from("org_departments")
+      .select("id")
+      .eq("is_active", true);
+    if (!activeDeptErr && activeDepts) {
+      const toDeactDept = activeDepts
+        .map((r) => r.id)
+        .filter((id) => !syncedDeptIds.has(id));
+      if (toDeactDept.length > 0) {
+        const { error: deactDeptErr } = await client.database
+          .from("org_departments")
+          .update({ is_active: false })
+          .in("id", toDeactDept);
+        if (deactDeptErr) console.error("[sync-contacts] deactivate depts failed:", deactDeptErr);
+        else console.log(`[sync-contacts] 标记删除部门 ${toDeactDept.length} 个:`, toDeactDept);
       }
     }
 
