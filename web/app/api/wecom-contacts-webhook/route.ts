@@ -157,7 +157,7 @@ export async function POST(request: Request) {
 
   const data = parseXml(eventXml);
   const changeType = data.ChangeType || data.changeType;
-  console.log("[webhook] event:", data.Event, "changeType:", changeType);
+  console.log("[webhook] event:", data.Event, "changeType:", changeType, "| UserID:", data.UserID, "| Id:", data.Id);
 
   if (data.Event !== "change_contact") {
     return new Response("success", { status: 200, headers: { "Content-Type": "text/plain" } });
