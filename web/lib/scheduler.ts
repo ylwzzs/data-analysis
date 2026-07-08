@@ -43,6 +43,9 @@ export async function ensureSchedulerInitialized(): Promise<boolean> {
 
   console.log('[scheduler] 初始化定时采集调度器...');
 
+  // 通讯录全量兜底（平台基础设施，独立于 collect_tasks；先注册，不依赖采集任务查询结果/是否为空）
+  registerContactSyncJob();
+
   const client = createClient({ baseUrl: INSFORGE_API_BASE, anonKey: INSFORGE_API_KEY });
 
   try {
@@ -68,9 +71,6 @@ export async function ensureSchedulerInitialized(): Promise<boolean> {
     for (const task of tasks) {
       registerTask(task);
     }
-
-    // 通讯录全量兜底（平台基础设施，独立于 collect_tasks）
-    registerContactSyncJob();
 
     state.initialized = true;
     console.log('[scheduler] 调度器初始化完成');
