@@ -4,6 +4,7 @@
 // 逻辑从 functions/wecom-contacts-webhook/index.js 搬运，适配 Web Request API + web 写库（@insforge/sdk + ANON_KEY）。
 
 import { createClient } from "@insforge/sdk";
+import { createDecipheriv } from "node:crypto";
 
 const TOKEN = process.env.WECOM_TOKEN || "";
 const ENCODING_AES_KEY = process.env.WECOM_ENCODING_AES_KEY || "";
@@ -12,8 +13,10 @@ const OPS_SECRET = process.env.WECOM_OPS_SECRET || "";
 const INSFORGE_API_BASE = process.env.INSFORGE_API_BASE || "http://insforge:7130";
 const INSFORGE_API_KEY = process.env.INSFORGE_API_KEY || "";
 
-// ---------- 加解密（Node crypto.subtle，企微 WXBizMsgCrypt）----------
-// subtle.decrypt AES-CBC 已自动去 PKCS7 padding，勿再手动 unpad。
+// ---------- 加解密（Node node:crypto，企微 WXBizMsgCrypt）----------
+// ⚠ 企微 WXBizMsgCrypt 用 32 字节 block PKCS7 padding（非 AES 标准 16），crypto.subtle.decrypt
+//   强制 16 block 验 padding，pad 值 > 16 时 OperationError（GET echostr 短 pad≤16 巧合过，POST 长 pad>16 必败）。
+//   故用 createDecipheriv setAutoPadding(false) 不验 padding，手动去企微 padding（末尾字节值=pad 长度 1-32）。
 function deriveAesKey(encodingAesKey: string): Uint8Array {
   const bin = atob(encodingAesKey + "=");
   const bytes = new Uint8Array(bin.length);
@@ -30,14 +33,17 @@ function base64ToBytes(b64: string): Uint8Array {
 
 async function decrypt(encryptB64: string, aesKey: Uint8Array) {
   const iv = aesKey.subarray(0, 16);
-  const cipher = base64ToBytes(encryptB64);
-  const key = await crypto.subtle.importKey("raw", aesKey as BufferSource, { name: "AES-CBC" }, false, ["decrypt"]);
-  const plain = await crypto.subtle.decrypt({ name: "AES-CBC", iv: iv as BufferSource }, key, cipher as BufferSource);
-  const buf = new Uint8Array(plain);
-  const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  const cipher = Buffer.from(base64ToBytes(encryptB64));
+  // 企微 32 字节 block PKCS7：setAutoPadding(false) 不验 padding，手动去（末尾字节值=pad 长度 1-32）
+  const d = createDecipheriv("aes-256-cbc", Buffer.from(aesKey), Buffer.from(iv));
+  d.setAutoPadding(false);
+  const plain = Buffer.concat([d.update(cipher), d.final()]);
+  const pad = plain[plain.length - 1];
+  const unpadded = plain.subarray(0, plain.length - pad);
+  const dv = new DataView(unpadded.buffer, unpadded.byteOffset, unpadded.byteLength);
   const msgLen = dv.getUint32(16);
-  const msg = new TextDecoder().decode(buf.subarray(20, 20 + msgLen));
-  const receiveid = new TextDecoder().decode(buf.subarray(20 + msgLen));
+  const msg = new TextDecoder().decode(unpadded.subarray(20, 20 + msgLen));
+  const receiveid = new TextDecoder().decode(unpadded.subarray(20 + msgLen));
   return { msg, receiveid };
 }
 
@@ -124,17 +130,6 @@ export async function POST(request: Request) {
   }
 
   const encrypt = extractEncrypt(body);
-  console.log("[webhook] POST bodyLen:", body.length, "| body(head 300):", body.slice(0, 300));
-  console.log("[webhook] encrypt:", encrypt ? `len=${encrypt.length}` : "null");
-  if (encrypt) console.log("[webhook] encrypt full:", encrypt);
-  if (encrypt) {
-    try {
-      const dec = base64ToBytes(encrypt);
-      console.log("[webhook] encrypt decode bytes:", dec.length, "| %16=", dec.length % 16);
-    } catch (e: any) {
-      console.log("[webhook] encrypt base64 decode err:", e.message);
-    }
-  }
   if (!encrypt) {
     console.warn("[webhook] no <Encrypt> in body");
     return new Response("success", { status: 200, headers: { "Content-Type": "text/plain" } });
