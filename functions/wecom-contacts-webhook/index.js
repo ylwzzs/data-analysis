@@ -39,20 +39,19 @@ function base64ToBytes(b64) {
 }
 
 // AES-256-CBC 解密 → { msg, receiveid }
+// ⚠ Web Crypto subtle.decrypt AES-CBC 已自动去 PKCS7 padding，返回的 plain 即明文，
+//   不能再手动 unpad（否则会把 receiveid 尾字节当 padding 截断）。
 async function decrypt(encryptB64, aesKey) {
   const iv = aesKey.slice(0, 16);
   const cipher = base64ToBytes(encryptB64);
   const key = await crypto.subtle.importKey("raw", aesKey, { name: "AES-CBC" }, false, ["decrypt"]);
   const plain = await crypto.subtle.decrypt({ name: "AES-CBC", iv }, key, cipher);
   const buf = new Uint8Array(plain);
-  // PKCS7 unpad
-  const pad = buf[buf.length - 1];
-  const unpadded = buf.subarray(0, buf.length - pad);
   // 结构：16B 随机 + 4B msg_len(大端) + msg + receiveid
-  const dv = new DataView(unpadded.buffer, unpadded.byteOffset, unpadded.byteLength);
+  const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
   const msgLen = dv.getUint32(16);
-  const msg = new TextDecoder().decode(unpadded.subarray(20, 20 + msgLen));
-  const receiveid = new TextDecoder().decode(unpadded.subarray(20 + msgLen));
+  const msg = new TextDecoder().decode(buf.subarray(20, 20 + msgLen));
+  const receiveid = new TextDecoder().decode(buf.subarray(20 + msgLen));
   return { msg, receiveid };
 }
 
