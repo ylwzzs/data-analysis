@@ -693,14 +693,37 @@ lemeng-datasource/
 
 ## 八、运维与监控
 
-### 8.1 告警通知
+### 8.1 监控告警体系（2026-07-08 设计，详见 `docs/superpowers/specs/2026-07-08-monitoring-system-design.md`）
 
-**企微应用消息**：
-- 采集不完整（3次重试后）
-- Token 过期
-- 采集异常
+**引擎拓扑**：复用 web 端 node-cron（`web/lib/scheduler.ts`），新增「监控扫描」调度，不新增容器/function。扫描按 check_type 自然节奏分桶：每分钟 `service_down` / 每 5 分钟 `collect_fail`·`request_fail`·`token_expire` / 每小时 `data_freshness`·`contact_sync` / 每日 `data_integrity`。防重入复用 scheduler 现有 globalThis 锁。
 
-**实现**：`lib/notify.ts` → `notifyWecom()`
+**数据模型**（新表）：
+- `monitor_rules`：规则定义（check_type 枚举 + target + threshold(jsonb) + severity + touser + template + suppress_window + enabled）。
+- `monitor_alerts`：告警状态/事件（`alert_key` UNIQUE → 同问题一行；status active/resolved；first/last_seen；occurrence_count；last_notify_at；context）。降噪与恢复核心。
+- `external_request_logs`：`callLemengApi` 每次调用埋点，`request_fail` 数据源（>7 天清理）。
+- ⚠️ 前置修复：`collect_logs` 加 `duration_ms`/`response_summary`（现代码写这两列但表没有，写入静默失败、大盘耗时列恒空）。
+
+**七个 check_type**（每个一个纯函数 evaluator：读数据源 → 比 threshold → 产出 firing/alert_key/context）：
+| check_type | 数据源 | 触发 |
+|---|---|---|
+| `token_expire` | `auth_credentials` JWT，解 payload `exp` | 剩余 < before_hours |
+| `collect_fail` | `collect_logs` | 连续失败 ≥ consecutive |
+| `request_fail` | `external_request_logs` | 窗口失败率 > failure_rate |
+| `service_down` | 主动探活 web/duckdb/insforge/postgres/deno/openclaw（应用级，5s 超时） | 任一不可达 |
+| `data_freshness` | PG 汇总表 + DuckDB parquet 最新日期 | 距今 > stale_hours |
+| `data_integrity` | DuckDB 明细 count vs PG 汇总 | 差异率 > diff_rate |
+| `contact_sync` | `org_users.updated_at` + 回调最近时间 | 距上次同步 > max_age_hours |
+
+**告警生命周期**：firing → upsert `monitor_alerts`(active) + `occurrence_count++`；`suppress_window`（默认 30min）内不重复发；问题消失 → 转 resolved + 发「已恢复」。规则改阈值/收件人/模板/级别/开关走表，不发版。
+
+**通知出口（主 + 兜底）**：
+- 主通道：复用 `functions/wecom-notify`（App B，凭据单点；web 薄客户端 `lib/notify.ts` → `notifyWecom()`）。
+- **兜底通道（关键）**：`service_down` 探到 InsForge 不可达时，wecom-notify 也发不出（它跑在 InsForge 上）→ web `notifyWecomDirect()` 用 `WECOM_OPS_SECRET` 直连企微 `message/send` 绕开 InsForge。仅此一条路径直连。
+- InsForge 不可达 = 大故障，兜底通道是唯一能让外界知道它挂了的手段。
+
+**只读大盘**：新建 `/admin/monitor`（实时活跃告警 + 事件流 + 7 类健康灯 + 采集日志），走 PostgREST 只读。
+
+**v1 非目标**：任意表达式规则引擎、规则 CRUD UI、值班/升级/静默时段、指标时序存储、自愈。
 
 ### 8.2 日志查看
 
@@ -759,6 +782,7 @@ docker exec deploy-postgres-1 psql -U postgres -d insforge -c "<SQL>"
 | scheduler 自初始化 | instrumentation `register()` 启动时初始化（globalThis 单例） | 2026-07-04 |
 | 企微应用拓扑 | 三应用隔离：报表/同步通知/bot 各一 | 2026-07-07 |
 | 统一通知服务 | edge function `wecom-notify`（App B，凭据单点） | 2026-07-07 |
+| 监控告警体系 | 复用 web node-cron + 结构化规则表(monitor_rules) + 状态表(monitor_alerts)；7 个 check_type；wecom-notify 主通道 + web 直连企微兜底(InsForge-down) | 2026-07-08 |
 
 ---
 
@@ -905,6 +929,7 @@ POST /compute {"report_type":"daily_supplier","date_from":"2026-07-02","date_to"
 | 跨引擎小表搬运 JOIN | ✅ 已验证（§4.2） | 待实现：网关编排（Appender 注入临时表） |
 | 美团数据源接入 | ⏳ 待讨论 | 架构待确认 |
 | 饿了么数据源接入 | ⏳ 待讨论 | 架构待确认 |
+| 监控告警体系 v1 | ✅ 已设计（§8.1） | 待实现：详见 `docs/superpowers/specs/2026-07-08-monitoring-system-design.md` |
 
 ---
 
