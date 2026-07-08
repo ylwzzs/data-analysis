@@ -592,7 +592,8 @@ WHERE departments ?| current_setting('request.jwt.claims.departments')
 |------|-----|-----------|------|
 | 登录 OAuth | `/cgi-bin/oauth2/authorize` | App A | ✅ |
 | 用户信息 | `/cgi-bin/auth/getuserinfo` | App A | ✅ |
-| 通讯录同步 | `/cgi-bin/department/list`、`/cgi-bin/user/list` | App B | ✅（全量） |
+| 通讯录全量同步（兜底） | `/cgi-bin/department/list`、`/cgi-bin/user/list` | App B | ✅（每日 03:17 全量兜底，详见 §7.1.2） |
+| 通讯录实时同步 | `change_contact` 回调（create/update/delete_user、create/update/delete_department） | **通讯录同步功能（非应用）** | 🆕 `functions/wecom-contact-callback`（详见 §7.1.2） |
 | 消息通知（统一） | `/cgi-bin/message/send` | App B（`functions/wecom-notify`） | ✅ |
 | OpenClaw 对话 | 回调收消息 + 主动消息 | App C | ✅ |
 
@@ -611,6 +612,40 @@ OpenClaw（主动通知）──────────────┴─ POST 
 - **默认收件人**：secret `NOTIFY_DEFAULT_TUSERS`（`|` 分隔），替代历史写死的单 `ZhangDuo`。
 - **调用方**：web `notifyWecom`（薄客户端，经 `@insforge/sdk` invoke）、OpenClaw 主动通知（复用 `AGENT_API_KEY`）。
 - **限**：token 每次现取（告警量低，可接受）；InsForge 挂则告警发不出（其挂即大故障）。
+
+### 7.1.2 通讯录实时同步（回调 + 兜底全量，2026-07-08）
+
+全量拉取延迟大（且此前无自动调度）；企微"邀请→微信昵称→实名"等字段漂移需实时纠正。**单一机制都不够**：回调可能丢消息、且 `update_user` 不保证覆盖所有字段变更；全量有延迟。故采用**回调（实时增量）+ 每日全量（兜底自愈）双轨**，互为补偿。
+
+```
+企微通讯录变更（入职/离职/改部门/部门变更）
+   │ POST 加密XML（msg_signature + timestamp + nonce + <Encrypt>）   Token / EncodingAESKey
+   ▼                                                                  仅企微与系统知晓
+https://data.shanhaiyiguo.com/functions/wecom-contact-callback
+   ├─ GET  企微 URL 验证：校签名 → AES 解密 echostr → 返明文
+   ├─ POST 事件：校签名 → AES 解密 → 解析 XML → 按 ChangeType 分派：
+   │     create/update_user       → user/get(userid) 拉权威快照 → upsert org_users(is_active=true)
+   │     delete_user              → org_users SET is_active=false（人已删，无法 get）
+   │     create/update_department → upsert org_departments
+   │     delete_department        → org_departments SET is_active=false
+   │   5s 内返 "success"
+   ▼
+org_users / org_departments（is_active 软删除）
+
+每日 03:17（web instrumentation cron）
+   ▼
+functions/wecom-sync-contacts（改造：兜底全量）
+   全量 user/list → upsert + 按"企微现状"对齐 is_active（企微没有的人标离职）→ 纠正一切回调漏的漂移
+```
+
+- **加解密**（企微 WXBizMsgCrypt 协议，Deno Web Crypto 手写零依赖）：AES key = `base64decode(EncodingAESKey+"=")`（32B），IV = key 前 16B，AES-256-CBC + PKCS7；解密结构 `16B随机 + 4B长度 + msg + receiveid`，校验 receiveid == `WECOM_CORP_ID` 防伪造；签名 `sha1(sort([token,timestamp,nonce,encrypt]))` == msg_signature。POST body 是 `text/xml`，手解析（事件结构固定）。
+- **回调只当通知，字段以 `user/get` 快照为准**：`update_user` 回调只带变化字段且不保证触发（典型如"微信昵称→实名"），故 create/update_user 一律补 `user/get(userid)` 拉全量再 upsert。`delete_user` 例外（直接软删）。
+- **name 一致性**：name 永远以最新同步值 upsert 覆盖，不区分昵称/实名（判断不可靠）；全量快照是最终一致性来源，纠正回调漏的一切字段漂移。
+- **软删除**：`org_users` / `org_departments` 加 `is_active BOOLEAN DEFAULT TRUE`，离职 / 删部门标 false 保留行（保历史 + 不破坏 `retail_query_user_perms` 关联，登录拦已离职）。
+- **secrets**：`CONTACT_CALLBACK_TOKEN` / `CONTACT_CALLBACK_ENCODING_AES_KEY`（企微后台「通讯录同步 → API 接口同步」生成；回调验证专用，非 API 调用）。
+- **幂等 + 5s 超时**：upsert 与 `SET is_active` 天然幂等，企微重试安全（回调不保证 at-least-once 不丢）；处理 < 600ms（user/get < 300ms + DB upsert），5s 内必返。
+- **回调 URL**：`https://data.shanhaiyiguo.com/functions/wecom-contact-callback`（企微后台「通讯录同步」填，会先 GET 验证才允许保存）。
+- **限**：依赖企微回调可达 + 企微「通讯录同步」功能已开启；回调漏的消息靠每日全量兜底（最长次日纠正）。
 
 ### 7.2 乐檬数据源
 
