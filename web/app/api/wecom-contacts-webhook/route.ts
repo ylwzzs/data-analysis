@@ -126,6 +126,7 @@ export async function POST(request: Request) {
   const encrypt = extractEncrypt(body);
   console.log("[webhook] POST bodyLen:", body.length, "| body(head 300):", body.slice(0, 300));
   console.log("[webhook] encrypt:", encrypt ? `len=${encrypt.length}` : "null");
+  if (encrypt) console.log("[webhook] encrypt full:", encrypt);
   if (encrypt) {
     try {
       const dec = base64ToBytes(encrypt);
