@@ -36,8 +36,11 @@ services:
       - WECOM_TOKEN=${WECOM_TOKEN}
       - WECOM_ENCODING_AES_KEY=${WECOM_ENCODING_AES_KEY}
       - WECOM_OPS_SECRET=${WECOM_OPS_SECRET}
+      - WECOM_OPS_AGENT_ID=${WECOM_OPS_AGENT_ID}
       # 统一通知：notifyWecom 调 wecom-notify 的鉴权密钥（架构文档 §7.1.1）
       - AGENT_API_KEY=${AGENT_API_KEY:-}
+      # 监控兜底通道默认收件人（InsForge-down 时 web 直连企微 message/send，架构 §8.1）
+      - NOTIFY_DEFAULT_TUSERS=${NOTIFY_DEFAULT_TUSERS}
     depends_on:
       - insforge
     networks:
