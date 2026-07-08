@@ -32,6 +32,10 @@ services:
       - WECOM_CORP_ID=${WECOM_CORP_ID}
       - WECOM_SECRET=${WECOM_SECRET}
       - WECOM_AGENT_ID=${WECOM_AGENT_ID}
+      # 企微通讯录回调（web/api route 验证解密 + user/get，架构 §7.1.2）
+      - WECOM_TOKEN=${WECOM_TOKEN}
+      - WECOM_ENCODING_AES_KEY=${WECOM_ENCODING_AES_KEY}
+      - WECOM_OPS_SECRET=${WECOM_OPS_SECRET}
       # 统一通知：notifyWecom 调 wecom-notify 的鉴权密钥（架构文档 §7.1.1）
       - AGENT_API_KEY=${AGENT_API_KEY:-}
     depends_on:
