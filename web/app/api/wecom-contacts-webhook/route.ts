@@ -157,7 +157,7 @@ export async function POST(request: Request) {
 
   const data = parseXml(eventXml);
   const changeType = data.ChangeType || data.changeType;
-  console.log("[webhook] event:", data.Event, "changeType:", changeType, "| UserID:", data.UserID, "| Id:", data.Id);
+  console.log("[webhook] event:", data.Event, "changeType:", changeType);
 
   if (data.Event !== "change_contact") {
     return new Response("success", { status: 200, headers: { "Content-Type": "text/plain" } });
@@ -192,7 +192,7 @@ export async function POST(request: Request) {
         break;
       }
       case "delete_user": {
-        const { error } = await client.database.from("org_users").update({ is_active: false }).eq("wecom_id", data.UserID);
+        const { error } = await client.database.from("org_users").update({ is_active: false, synced_at: new Date().toISOString() }).eq("wecom_id", data.UserID);
         if (error) {
           console.error("[webhook] soft-delete user failed:", error);
           return json({ error: "delete_user_failed", detail: error }, 502);
@@ -216,7 +216,7 @@ export async function POST(request: Request) {
         break;
       }
       case "delete_party": {
-        const { error } = await client.database.from("org_departments").update({ is_active: false }).eq("id", String(data.Id));
+        const { error } = await client.database.from("org_departments").update({ is_active: false, synced_at: new Date().toISOString() }).eq("id", String(data.Id));
         if (error) {
           console.error("[webhook] soft-delete dept failed:", error);
           return json({ error: "delete_department_failed", detail: error }, 502);
