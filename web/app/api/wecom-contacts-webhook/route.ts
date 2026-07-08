@@ -124,6 +124,16 @@ export async function POST(request: Request) {
   }
 
   const encrypt = extractEncrypt(body);
+  console.log("[webhook] POST bodyLen:", body.length, "| body(head 300):", body.slice(0, 300));
+  console.log("[webhook] encrypt:", encrypt ? `len=${encrypt.length}` : "null");
+  if (encrypt) {
+    try {
+      const dec = base64ToBytes(encrypt);
+      console.log("[webhook] encrypt decode bytes:", dec.length, "| %16=", dec.length % 16);
+    } catch (e: any) {
+      console.log("[webhook] encrypt base64 decode err:", e.message);
+    }
+  }
   if (!encrypt) {
     console.warn("[webhook] no <Encrypt> in body");
     return new Response("success", { status: 200, headers: { "Content-Type": "text/plain" } });
