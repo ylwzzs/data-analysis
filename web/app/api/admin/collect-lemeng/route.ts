@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { task_id } = body;
+    const { task_id, token: overrideToken } = body;
 
     const client = createClient({ baseUrl: INSFORGE_API_BASE, anonKey: INSFORGE_API_KEY });
 
@@ -40,9 +40,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: 'Task not found' }, { status: 404 });
     }
 
-    // 获取凭证
+    // 获取凭证（若调用方手动传入 token，直接用，绕开 DB——用于诊断 token 存储/读取问题）
     let credentials: Record<string, string> = {};
-    if (task.source_id) {
+    if (overrideToken) {
+      credentials = { token: overrideToken };
+      console.log('[collect-lemeng] 使用调用方手动传入的 token（绕开 auth_credentials）');
+    } else if (task.source_id) {
       const { data: cred } = await client.database
         .from('auth_credentials')
         .select('credential_data')
