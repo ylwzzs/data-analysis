@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { task_id, token: overrideToken } = body;
+    const { task_id, token: overrideToken, compare_token } = body;
 
     const client = createClient({ baseUrl: INSFORGE_API_BASE, anonKey: INSFORGE_API_KEY });
 
@@ -97,6 +97,17 @@ export async function POST(req: NextRequest) {
         const finishedAt = new Date();
         await writeLog(client, task_id, startedAt, finishedAt, 'failed', 0, lastResult.error);
         const _dbg = { source: overrideToken ? '调用方传入' : 'DB读取', len: authToken.length, tail: authToken.slice(-15), has_bearer: authToken.startsWith('Bearer '), raw_cred_len: _rawCredLen, raw_cred_tail: _rawCredTail };
+        // 逐字节对比 DB 读出的 token vs 调用方提供的 compare_token（诊断 SDK 读取是否把字符搞坏）
+        if (compare_token && !overrideToken) {
+          const a = authToken;
+          const b = compare_token.startsWith('Bearer ') ? compare_token : `Bearer ${compare_token}`;
+          const diffs: number[] = [];
+          for (let i = 0; i < Math.max(a.length, b.length); i++) if (a[i] !== b[i]) diffs.push(i);
+          (_dbg as any).cmp = {
+            equal: a === b, provided_len: b.length, diff_count: diffs.length, first_diffs: diffs.slice(0, 8),
+            samples: diffs.slice(0, 4).map(i => ({ at: i, read_code: a.charCodeAt(i), read_char: JSON.stringify(a[i]), prov_code: b.charCodeAt(i), prov_char: JSON.stringify(b[i]), read_ctx: JSON.stringify(a.slice(Math.max(0, i - 6), i + 6)), prov_ctx: JSON.stringify(b.slice(Math.max(0, i - 6), i + 6)) })),
+          };
+        }
         console.log('[collect-lemeng] Token expired. 实际读到的 token:', JSON.stringify(_dbg));
         return NextResponse.json({ success: false, error: lastResult.error, _debug_token: _dbg }, { status: 401 });
       }
