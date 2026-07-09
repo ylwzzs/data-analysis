@@ -205,18 +205,13 @@ export default function DataSourcesPage() {
               const formData = new FormData(e.target);
               const credentials: Record<string, string> = {};
               formData.forEach((value, key) => {
-                // expires_at 走 auth_credentials 独立列，不混进 credential_data
-                if (key === 'expires_at') return;
                 credentials[key] = value.toString();
               });
 
               await fetch(`/api/admin/data-sources/${editingSource.id}/credentials`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  credentials,
-                  expires_at: formData.get('expires_at') || null
-                })
+                body: JSON.stringify({ credentials })
               });
 
               setEditingSource(null);
@@ -230,8 +225,9 @@ export default function DataSourcesPage() {
                     <textarea name="token" rows={3} className="w-full border rounded px-3 py-2 font-mono text-xs" required />
                   </div>
                   <div className="mb-4">
-                    <label className="block text-sm font-medium mb-1">过期时间</label>
-                    <input name="expires_at" type="date" className="w-full border rounded px-3 py-2" />
+                    <p className="text-xs text-gray-500">
+                      ℹ️ 有效期由 token 自动识别（解码 JWT exp），保存后列表显示倒计时，到期前 24h 自动企微提醒，无需手填。
+                    </p>
                   </div>
                 </>
               )}

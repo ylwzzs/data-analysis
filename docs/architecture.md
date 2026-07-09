@@ -462,6 +462,7 @@ DuckDB /query〔改造：每请求独立连接 + AGENT_API_KEY〕
 - **branch_nums 传空 = 该品牌全部门店**：`[]` 返回当前 token(company) 维度全量（实测 3120=13118、64188=8134/天）。
 - **多品牌 token 可同时有效**：实测切换品牌不互顶。
 - **scheduler 读凭证**：按 `collect_tasks.source_id` 取 `auth_credentials`，同源任务自然共用。
+- **过期时间自动派生（2026-07-09）**：`auth_credentials.expires_at` 不再手填，由 token 的 JWT `exp` claim 在保存凭证时（`web/app/api/admin/data-sources/[id]/credentials/route.ts`）自动解码派生；`token_expire` 监控独立现解 JWT `exp`、不依赖此列（双保险）。非 JWT 源（api_key/basic）无 `exp`，该列留空（本就不过期）。
 - **扩展约定**：新增源类型（金蝶等）时，scheduler 按 `data_source.auth_type` 分派鉴权方式。
 
 ### 5.1 采集流程
