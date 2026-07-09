@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { task_id, token: overrideToken, compare_token } = body;
+    const { task_id } = body;
 
     const client = createClient({ baseUrl: INSFORGE_API_BASE, anonKey: INSFORGE_API_KEY });
 
@@ -40,14 +40,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: 'Task not found' }, { status: 404 });
     }
 
-    // 获取凭证（若调用方手动传入 token，直接用，绕开 DB——用于诊断 token 存储/读取问题）
+    // 获取凭证
     let credentials: Record<string, string> = {};
-    let _rawCredLen: number | undefined;
-    let _rawCredTail: string | undefined;
-    if (overrideToken) {
-      credentials = { token: overrideToken };
-      console.log('[collect-lemeng] 使用调用方手动传入的 token（绕开 auth_credentials）');
-    } else if (task.source_id) {
+    if (task.source_id) {
       const { data: cred } = await client.database
         .from('auth_credentials')
         .select('credential_data')
@@ -55,8 +50,6 @@ export async function POST(req: NextRequest) {
         .single();
 
       if (cred?.credential_data) {
-        _rawCredLen = cred.credential_data.length;
-        _rawCredTail = cred.credential_data.slice(-15);
         try { credentials = JSON.parse(cred.credential_data); } catch { /* ignore */ }
       }
     }
@@ -96,20 +89,7 @@ export async function POST(req: NextRequest) {
       if (lastResult.error.startsWith('Token expired')) {
         const finishedAt = new Date();
         await writeLog(client, task_id, startedAt, finishedAt, 'failed', 0, lastResult.error);
-        const _dbg = { source: overrideToken ? '调用方传入' : 'DB读取', len: authToken.length, tail: authToken.slice(-15), has_bearer: authToken.startsWith('Bearer '), raw_cred_len: _rawCredLen, raw_cred_tail: _rawCredTail };
-        // 逐字节对比 DB 读出的 token vs 调用方提供的 compare_token（诊断 SDK 读取是否把字符搞坏）
-        if (compare_token && !overrideToken) {
-          const a = authToken;
-          const b = compare_token.startsWith('Bearer ') ? compare_token : `Bearer ${compare_token}`;
-          const diffs: number[] = [];
-          for (let i = 0; i < Math.max(a.length, b.length); i++) if (a[i] !== b[i]) diffs.push(i);
-          (_dbg as any).cmp = {
-            equal: a === b, provided_len: b.length, diff_count: diffs.length, first_diffs: diffs.slice(0, 8),
-            samples: diffs.slice(0, 4).map(i => ({ at: i, read_code: a.charCodeAt(i), read_char: JSON.stringify(a[i]), prov_code: b.charCodeAt(i), prov_char: JSON.stringify(b[i]), read_ctx: JSON.stringify(a.slice(Math.max(0, i - 6), i + 6)), prov_ctx: JSON.stringify(b.slice(Math.max(0, i - 6), i + 6)) })),
-          };
-        }
-        console.log('[collect-lemeng] Token expired. 实际读到的 token:', JSON.stringify(_dbg));
-        return NextResponse.json({ success: false, error: lastResult.error, _debug_token: _dbg }, { status: 401 });
+        return NextResponse.json({ success: false, error: lastResult.error }, { status: 401 });
       }
 
       // 无数据直接退出
