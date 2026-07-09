@@ -42,6 +42,8 @@ export async function POST(req: NextRequest) {
 
     // 获取凭证（若调用方手动传入 token，直接用，绕开 DB——用于诊断 token 存储/读取问题）
     let credentials: Record<string, string> = {};
+    let _rawCredLen: number | undefined;
+    let _rawCredTail: string | undefined;
     if (overrideToken) {
       credentials = { token: overrideToken };
       console.log('[collect-lemeng] 使用调用方手动传入的 token（绕开 auth_credentials）');
@@ -53,6 +55,8 @@ export async function POST(req: NextRequest) {
         .single();
 
       if (cred?.credential_data) {
+        _rawCredLen = cred.credential_data.length;
+        _rawCredTail = cred.credential_data.slice(-15);
         try { credentials = JSON.parse(cred.credential_data); } catch { /* ignore */ }
       }
     }
@@ -92,7 +96,9 @@ export async function POST(req: NextRequest) {
       if (lastResult.error.startsWith('Token expired')) {
         const finishedAt = new Date();
         await writeLog(client, task_id, startedAt, finishedAt, 'failed', 0, lastResult.error);
-        return NextResponse.json({ success: false, error: lastResult.error }, { status: 401 });
+        const _dbg = { source: overrideToken ? '调用方传入' : 'DB读取', len: authToken.length, tail: authToken.slice(-15), has_bearer: authToken.startsWith('Bearer '), raw_cred_len: _rawCredLen, raw_cred_tail: _rawCredTail };
+        console.log('[collect-lemeng] Token expired. 实际读到的 token:', JSON.stringify(_dbg));
+        return NextResponse.json({ success: false, error: lastResult.error, _debug_token: _dbg }, { status: 401 });
       }
 
       // 无数据直接退出
