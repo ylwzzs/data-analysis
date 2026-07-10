@@ -22,6 +22,22 @@
 
 在讨论架构时，应给出完整的方案对比和推荐理由，等用户确认后再实施。
 
+## 采集任务数据完整性规则（重要）
+
+**任何采集任务（新增或改动）必须内置数据完整性方案，否则不予合并/部署。**
+
+"完整性方案"至少覆盖以下五点（缺一不可）：
+
+1. **按维度对账校验**：写库后按采集维度（品牌/数据源，**不能用全表数**）比对"库内 active 数 ≥ 源 total"。多品牌共享一张表时尤其注意——全表数会被其它品牌掩盖，partial write 测不出。
+2. **拉取完整性**：分页失败要计数、不能静默 `continue` 丢页；不能因某页返回不满 `pageSize` 提前 `break` 丢尾部；以"累计拉取数 ≥ total"判定 `fetchComplete`。
+3. **写入失败检测**：upsert 批失败计入 `upsertFailures`；`verified = fetchComplete && upsertFailures===0 && activeCount>=total`。任一失败 → `verified=false`（杜绝 schema 缓存/网络抖动导致的 silent success）。
+4. **陈旧数据处理（软删除）**：源已删除/淘汰的数据不能永久留在表里。全量采集时先把该维度全部标 `is_active=false`，再把本次见到的 upsert 标回 `true`（partial run 不做软删除，避免误标）。
+5. **失败→告警联动**：`verified=false` → collect_logs 记 `failed` → 接入 `collect_fail` 监控告警。完整性不通过必须能被发现，不能静默。
+
+> 关联坑（实测，2026-07-10 商品档案 is_active 列踩过）：
+> - 加表/加列后须 `docker compose restart postgrest` 刷 schema 缓存，否则 PostgREST 400 `Could not find the column ... in the schema cache`（GHA 部署不保证重启 postgrest）。
+> - `migrate.sh` 每次部署重跑**全部**迁移；视图必须用 `DROP VIEW IF EXISTS + CREATE VIEW`，不能用 `CREATE OR REPLACE`（后迁移给视图加列后重跑会报 `cannot drop columns from view`）。
+
 ## 服务器 SSH 连接
 
 目标服务器连接方式：
