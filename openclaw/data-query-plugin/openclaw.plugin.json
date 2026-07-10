@@ -13,7 +13,8 @@
   },
   "contracts": {
     "tools": [
-      "query_retail_data"
+      "query_retail_data",
+      "list_datasets"
     ]
   },
   "skills": [
