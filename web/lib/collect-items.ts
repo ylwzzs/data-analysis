@@ -5,18 +5,57 @@
 import crypto from 'crypto';
 
 // ===== 类型定义 =====
-interface LemengItem {
+// API 原始记录（按需取字段，其余进 raw JSONB）
+interface LemengItem { [k: string]: any }
+
+// dim_item 列（base 列 + raw；绝不写 ext 列）
+interface DimItemRow {
+  system_book_code: string;
   item_num: string;
-  item_code: string;
-  item_name: string;
-  item_category?: string;
-  item_spec?: string;
-  item_unit?: string;
-  department?: string;
-  item_regular_price?: number;
-  item_cost_price?: number;
-  item_status?: string;
-  branch_id?: number;
+  item_code: string | null;
+  bar_code: string | null;
+  item_name: string | null;
+  category_code: string | null;
+  category_name: string | null;
+  category_path: string | null;
+  top_category: string | null;
+  item_brand: string | null;
+  department: string | null;
+  item_unit: string | null;
+  item_regular_price: string | null;
+  item_cost_price: string | null;
+  supplier_name: string | null;
+  item_tags: string | null;
+  raw: object;
+}
+
+// 乐檬 API 原始对象 → dim_item 行（类别/部门从嵌套对象取，结构化）
+function mapToDimItem(it: LemengItem): DimItemRow | null {
+  const system_book_code = String(it.system_book_code ?? '');
+  const item_num = String(it.item_num ?? '');
+  if (!system_book_code || !item_num) return null;  // 缺主键跳过
+  const cat = it.item_category || {};
+  const dept = it.item_department || {};
+  const str = (v: any) => (v == null ? null : String(v));
+  return {
+    system_book_code,
+    item_num,
+    item_code: str(it.item_code),
+    bar_code: str(it.bar_code ?? it.item_barcode),
+    item_name: str(it.item_name),
+    category_code: str(cat.category_code),
+    category_name: str(cat.category_name),
+    category_path: str(it.full_category_path),
+    top_category: str(it.top_category),
+    item_brand: str(it.item_brand),
+    department: str(dept.item_department_name ?? it.department),
+    item_unit: str(it.item_unit ?? it.unit_name),
+    item_regular_price: str(it.item_regular_price),
+    item_cost_price: str(it.item_cost_price),
+    supplier_name: str(it.item_first_supplier),
+    item_tags: str(it.item_tag_strs),
+    raw: it,
+  };
 }
 
 interface LemengApiResponse {
@@ -137,11 +176,11 @@ async function callLemengApi(urlPath: string, authToken: string, bodyStr: string
   return { ok: false, error: "Max retries exceeded" };
 }
 
-// ===== 直接调用 PostgREST 的 upsert =====
+// ===== 直接调用 PostgREST 的 upsert（写 dim_item）=====
 async function upsertToPostgREST(records: LemengItem[]): Promise<{ success: boolean; upserted?: number; error?: string }> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json; charset=utf-8',
-    'Prefer': 'resolution=merge-duplicates'
+    'Prefer': 'resolution=merge-duplicates'   // 冲突在 PK (system_book_code, item_num) 上 merge
   };
 
   // 仅在有有效 JWT 时添加 auth header（RLS 未启用时也可无 auth 访问）
@@ -150,17 +189,19 @@ async function upsertToPostgREST(records: LemengItem[]): Promise<{ success: bool
     headers['apikey'] = INSFORGE_ANON_KEY;
   }
 
-  const url = `${POSTGREST_URL}/lemeng_items`;
+  const rows = records.map(mapToDimItem).filter((r): r is DimItemRow => r !== null);
+  if (rows.length === 0) return { success: true, upserted: 0 };
+  const url = `${POSTGREST_URL}/dim_item`;
 
   try {
     const response = await fetchWithTimeout(url, {
       method: 'POST',
       headers,
-      body: JSON.stringify(records)
+      body: JSON.stringify(rows)
     }, 30000);
 
     if (response.status === 201 || response.status === 200) {
-      return { success: true, upserted: records.length };
+      return { success: true, upserted: rows.length };
     }
 
     const errorText = await response.text();
@@ -186,7 +227,7 @@ async function getDbCount(): Promise<number> {
     headers['Range'] = '0-0';
 
     const response = await fetchWithTimeout(
-      `${POSTGREST_URL}/lemeng_items?select=item_num`,
+      `${POSTGREST_URL}/dim_item?select=item_num`,
       { method: 'GET', headers },
       15000
     );
@@ -306,21 +347,7 @@ export async function collectItems(
 
     for (let i = 0; i < dedupedRecords.length; i += batchSize) {
       const batch = dedupedRecords.slice(i, i + batchSize);
-      const upsertRecords = batch.map(item => ({
-        item_num: item.item_num,
-        item_code: item.item_code,
-        item_name: item.item_name,
-        item_category: item.item_category,
-        item_spec: item.item_spec,
-        item_unit: item.item_unit,
-        department: item.department,
-        item_regular_price: item.item_regular_price,
-        item_cost_price: item.item_cost_price,
-        item_status: item.item_status,
-        branch_id: item.branch_id || branchId,
-      }));
-
-      const { success, error } = await upsertToPostgREST(upsertRecords);
+      const { success, error } = await upsertToPostgREST(batch);
 
       if (!success) {
         failCount += batch.length;
