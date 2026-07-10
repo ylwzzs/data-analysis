@@ -372,17 +372,17 @@ export async function collectItems(
   }
 
   // ===== 写入 PostgreSQL（批量 upsert；mapToDimItem 带 is_active=true）=====
+  let upsertFailures = 0;
   if (dedupedRecords.length > 0) {
     const batchSize = 100;
     let successCount = 0;
-    let failCount = 0;
 
     for (let i = 0; i < dedupedRecords.length; i += batchSize) {
       const batch = dedupedRecords.slice(i, i + batchSize);
       const { success, error } = await upsertToPostgREST(batch);
 
       if (!success) {
-        failCount += batch.length;
+        upsertFailures += batch.length;
         console.error(`[collect-items] Batch ${i}-${i + batchSize} upsert failed: ${error}`);
       } else {
         successCount += batch.length;
@@ -390,20 +390,21 @@ export async function collectItems(
     }
 
     result.collected = successCount;
-    console.log(`[collect-items] Upserted ${successCount} items, failed ${failCount}`);
+    console.log(`[collect-items] Upserted ${successCount} items, failed ${upsertFailures}`);
   }
 
-  // ===== 完整校验：该品牌 active 数 vs API total（partial write / 丢页都能测出）=====
+  // ===== 完整校验：拉取完整 + 无 upsert 失败 + 该品牌 active 数 >= API total =====
+  // 三者皆满足才算 verified（任一失败→verified=false→collect-lemeng 记 failed→collect_fail 告警）
   const activeCount = brand ? await getActiveCount(brand) : 0;
   result.dbCount = activeCount;
-  result.verified = fetchComplete && activeCount >= total;
+  result.verified = fetchComplete && upsertFailures === 0 && activeCount >= total;
 
   if (result.verified) {
     console.log(`[collect-items] ✅ 校验通过: ${brand} active ${activeCount} >= API ${total}`);
   } else {
-    console.warn(`[collect-items] ⚠️ 校验未通过: ${brand} active ${activeCount} < API ${total} (fetchComplete=${fetchComplete})`);
+    console.warn(`[collect-items] ⚠️ 校验未通过: ${brand} active ${activeCount}/${total} (fetchComplete=${fetchComplete}, upsertFailures=${upsertFailures})`);
     if (!result.error) {
-      result.error = `校验未通过: ${brand} active ${activeCount} < API ${total}`;
+      result.error = `校验未通过: ${brand} active ${activeCount}/${total} (fetchComplete=${fetchComplete}, upsertFailures=${upsertFailures})`;
     }
   }
 
