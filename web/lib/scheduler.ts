@@ -6,6 +6,7 @@ import cron, { ScheduledTask } from 'node-cron';
 import { createClient } from '@insforge/sdk';
 import { collectOnce, getYesterdayChina, getTodayChina, CollectResult } from './collect';
 import { collectItems, CollectItemsResult } from './collect-items';
+import { collectBranches } from './collect-branches';
 import { notifyWecom } from './notify';
 import { runServiceDownBucket, runCollectTokenBucket, runHourlyBucket, runDailyBucket } from './monitor/runtime';
 
@@ -193,6 +194,32 @@ async function executeTask(task: {
       );
 
       console.log(`[scheduler] 商品档案采集完成: ${result.collected}/${result.total} 条, DB ${result.dbCount}, 校验 ${result.verified ? '✅' : '❌'}`);
+      return;
+    }
+
+    if (params.task_type === 'branches') {
+      // ===== 门店档案采集 =====
+      console.log(`[scheduler] 门店档案采集: ${task.name}`);
+      const companyId = Number(params.company_id);
+      const pageSize = params.page_size || 200;
+      if (!companyId) {
+        await writeLog(client, task.id, startedAt, new Date(), 'failed', 0, '缺 params.company_id');
+        return;
+      }
+      const result = await collectBranches(authToken, companyId, pageSize);
+
+      const finishedAt = new Date();
+      await client.database
+        .from('collect_tasks')
+        .update({ last_run_at: finishedAt.toISOString() })
+        .eq('id', task.id);
+
+      const finalStatus = result.error ? 'failed' : (result.verified ? 'success' : 'partial');
+      await writeLog(
+        client, task.id, startedAt, finishedAt, finalStatus, result.collected,
+        result.error || undefined, { total: result.total, dbCount: result.dbCount, verified: result.verified }
+      );
+      console.log(`[scheduler] 门店档案采集完成: ${result.collected}/${result.total}, DB ${result.dbCount}, 校验 ${result.verified ? '✅' : '❌'}`);
       return;
     }
 
