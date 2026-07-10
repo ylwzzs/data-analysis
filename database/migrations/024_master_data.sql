@@ -57,7 +57,8 @@ CREATE TABLE IF NOT EXISTS item_scenario_names (
 COMMENT ON TABLE item_scenario_names IS '商品场景命名映射（一商品多场景多名）';
 
 -- ===== 跨品牌合并视图（按 item_code 自动聚合；60% 同码合并、40% 各异分开） =====
-CREATE OR REPLACE VIEW canonical_product AS
+DROP VIEW IF EXISTS canonical_product;
+CREATE VIEW canonical_product AS
 SELECT item_code,
        (ARRAY_AGG(item_name ORDER BY item_name))[1] AS display_name,
        (ARRAY_AGG(category_name ORDER BY item_name))[1] AS category_name,
