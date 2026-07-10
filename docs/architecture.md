@@ -96,6 +96,12 @@
 | `report_daily_sales` | 每日门店销售汇总 | 几百条/天 |
 | `report_daily_category` | 每日品类汇总 | 几十条/天 |
 | `report_weekly_trend` | 周趋势汇总 | 几百条/周 |
+| `dim_item` | 商品主数据（双品牌，PK `system_book_code`+`item_num`） | 4万+ |
+| `dim_item_ext` | 商品扩展（人工二次维护，采集永不碰） | 按需 |
+| `item_scenario_names` | 商品场景命名映射 | 按需 |
+| `canonical_product` | 跨品牌合并视图（按 `item_code` 自动聚合） | 2.5万 |
+
+> **主数据（商品）·2026-07-10**：`dim_item` 取代已废弃的 `lemeng_items`。关联键 = `item_num`（明细↔档案，实测一致）；跨品牌合并键 = `item_code`（`canonical_product` 视图按它自动聚合，双品牌 ~59% 同码合并）。采集写 base 列 + raw JSONB，扩展字段进独立表 `dim_item_ext`（采集绝不覆盖）。门店 `dim_branch` 待单独采集（同模式，延后）。设计详见 `docs/superpowers/specs/2026-07-10-report-master-data-design.md`。
 
 **权限模型**：
 - Role：`anon`（匿名）、`authenticated`（已登录）、`admin`（管理员）
