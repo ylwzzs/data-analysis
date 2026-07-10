@@ -13,21 +13,46 @@ const JWT_SECRET = Deno.env.get("JWT_SIGNING_KEY") || Deno.env.get("JWT_SECRET")
 const DUCKDB_URL = Deno.env.get("DUCKDB_URL") || "http://duckdb:9000";
 const POSTGREST_URL = Deno.env.get("POSTGREST_BASE_URL") || "http://postgrest:3000";
 
-// retail_detail 明细：OOS 全品牌全日期（§7.3 按 company_id 分区）
-const RETAIL_GLOB = "s3://lemeng-datasource/lemeng/retail_detail/*/*/all.parquet";
-// 成本敏感组（必须成组脱敏，防 sale_money × sale_profit_rate 反算 profit）
-const COST_COLUMNS = [
-  "item_cost_price",
-  "order_detail_cost",
-  "order_detail_grade_cost",
-  "cost",
-  "profit",
-  "sale_profit_rate",
-];
-// PG 汇总表（命中则走 PG 路径）
-const REPORT_TABLES = ["report_daily_sales", "report_daily_category", "report_weekly_trend"];
+// 注册表读失败时的回退值（保证不线下；正常走数据注册中心 datasets/dataset_columns）
+const RETAIL_GLOB_FALLBACK = "s3://lemeng-datasource/lemeng/retail_detail/*/*/all.parquet";
+const COST_COLUMNS_FALLBACK = ["item_cost_price", "order_detail_cost", "order_detail_grade_cost", "cost", "profit", "sale_profit_rate"];
+const REPORT_TABLES_FALLBACK = ["report_daily_sales", "report_daily_category", "report_weekly_trend"];
 const MAX_ROWS = 1000;
 const SHORT_JWT_TTL = 300; // 网关代签短时 JWT 有效期（秒）
+
+// 数据注册中心读取：替代上面三处硬编码（glob/成本列/PG路由表）。
+// 60s 缓存避免每查打 PG；读失败用回退值兜底，绝不线下。serviceJwt 在下方声明（函数提升，运行时调用）。
+let REG_CACHE = null;
+let REG_CACHE_TS = 0;
+const REG_TTL_MS = 60000;
+async function loadRegistry() {
+  const now = Date.now();
+  if (REG_CACHE && now - REG_CACHE_TS < REG_TTL_MS) return REG_CACHE;
+  const headers = { Authorization: "Bearer " + (await serviceJwt()), "Content-Type": "application/json" };
+  let retailGlob = RETAIL_GLOB_FALLBACK;
+  let costColumns = COST_COLUMNS_FALLBACK.slice();
+  let pgTables = REPORT_TABLES_FALLBACK.slice();
+  try {
+    const dsRes = await fetch(POSTGREST_URL + "/datasets?select=name,engine,source,exposed", { headers });
+    if (dsRes.ok) {
+      const ds = await dsRes.json();
+      const retailRow = ds.find((d) => d.name === "retail_detail");
+      if (retailRow && retailRow.source) retailGlob = retailRow.source;
+      const pg = ds.filter((d) => d.exposed && d.engine === "pg_table").map((d) => d.name);
+      if (pg.length) pgTables = pg;
+    }
+    const colRes = await fetch(POSTGREST_URL + "/dataset_columns?select=name&is_sensitive=eq.true", { headers });
+    if (colRes.ok) {
+      const cols = await colRes.json();
+      if (Array.isArray(cols) && cols.length) costColumns = cols.map((c) => c.name);
+    }
+  } catch (e) {
+    console.error("[agent-query] loadRegistry failed, using fallback:", String(e));
+  }
+  REG_CACHE = { retailGlob, costColumns, pgTables };
+  REG_CACHE_TS = now;
+  return REG_CACHE;
+}
 
 // ===== JWT（复用 wecom-oauth 的 signJwt，HS256 + JWT_SECRET）=====
 function b64url(bytes) {
@@ -73,7 +98,7 @@ function json(data, status) {
 function sqlLit(s) {
   return "'" + String(s).replace(/'/g, "''") + "'"; // branch_num 等数值字符串
 }
-const isReportQuery = (sql) => REPORT_TABLES.some((t) => new RegExp("\\b" + t + "\\b", "i").test(sql));
+const isPgQuery = (sql, pgTables) => pgTables.some((t) => new RegExp("\\b" + t + "\\b", "i").test(sql));
 
 // SQL 白名单：仅 SELECT、禁 read_parquet/DDL/DML/COPY；无 LIMIT 则强制补
 function validateSql(raw) {
@@ -91,18 +116,18 @@ function validateSql(raw) {
   return trimmed + " LIMIT " + MAX_ROWS;
 }
 
-// ④ DuckDB 路径：拼权限视图（行 branch_nums + 列成本组脱敏，硬编码进视图定义）
-async function runDuckdb(userSelect, perms) {
+// ④ DuckDB 路径：拼权限视图（行 branch_nums 过滤 + 列成本组脱敏；成本列/glob 来源 reg=注册表）
+async function runDuckdb(userSelect, perms, reg) {
   const allBranches = !Array.isArray(perms.branch_nums) || perms.branch_nums.length === 0 || perms.branch_nums.includes("*");
   const branchFilter = allBranches
     ? ""
     : "WHERE branch_num IN (" + perms.branch_nums.map(sqlLit).join(", ") + ")";
   const canSee = perms.can_see_cost ? "TRUE" : "FALSE";
-  const replaceList = COST_COLUMNS.map((c) => `CASE WHEN ${canSee} THEN "${c}" ELSE NULL END AS "${c}"`).join(", ");
+  const replaceList = reg.costColumns.map((c) => `CASE WHEN ${canSee} THEN "${c}" ELSE NULL END AS "${c}"`).join(", ");
   const viewSql =
     "CREATE OR REPLACE TEMP VIEW retail_detail AS " +
     "SELECT * REPLACE (" + replaceList + ") " +
-    "FROM read_parquet('" + RETAIL_GLOB + "') " + branchFilter + ";";
+    "FROM read_parquet('" + reg.retailGlob + "') " + branchFilter + ";";
   // 一次提交：建视图 + 用户 SELECT（同连接，临时视图隔离，已实测）
   const combined = viewSql + "\n" + userSelect;
   const res = await fetch(DUCKDB_URL + "/query", {
@@ -181,6 +206,22 @@ module.exports = async function (req) {
 
   // ① 认证
   if (!AGENT_API_KEY || key !== AGENT_API_KEY) return json({ error: "unauthorized" }, 401);
+
+  // ①.5 dictionary 模式（LLM list_datasets 工具拉字典；只需认证，不需 per-user 权限）
+  if (body.mode === "dictionary") {
+    try {
+      const r = await fetch(POSTGREST_URL + "/rpc/get_data_dictionary", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + (await serviceJwt()), "Content-Type": "application/json" },
+        body: "{}",
+      });
+      const dictionary = await r.json();
+      return json({ success: true, dictionary });
+    } catch (e) {
+      return json({ error: "dictionary_failed", detail: String(e) }, 502);
+    }
+  }
+
   if (!sql || !userId) return json({ error: "missing sql/userId" }, 400);
 
   // ② 授权
@@ -207,11 +248,12 @@ module.exports = async function (req) {
     return json({ error: "sql_rejected", rule: e.message }, 400);
   }
 
-  // ④/⑤ 引擎路由
-  const engine = isReportQuery(sql) ? "pg" : "duckdb";
+  // ④/⑤ 引擎路由（pg_table 数据集→PG，否则→DuckDB；来源注册表）
+  const reg = await loadRegistry();
+  const engine = isPgQuery(sql, reg.pgTables) ? "pg" : "duckdb";
   let data, err;
   try {
-    data = engine === "pg" ? await runPg(finalSql, userId, perms) : await runDuckdb(finalSql, perms);
+    data = engine === "pg" ? await runPg(finalSql, userId, perms) : await runDuckdb(finalSql, perms, reg);
   } catch (e) {
     err = String(e.message || e);
   }
