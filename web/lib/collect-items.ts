@@ -26,6 +26,7 @@ interface DimItemRow {
   item_cost_price: string | null;
   supplier_name: string | null;
   item_tags: string | null;
+  is_active: boolean;
   raw: object;
 }
 
@@ -54,6 +55,7 @@ function mapToDimItem(it: LemengItem): DimItemRow | null {
     item_cost_price: str(it.item_cost_price),
     supplier_name: str(it.item_first_supplier),
     item_tags: str(it.item_tag_strs),
+    is_active: true,
     raw: it,
   };
 }
@@ -213,26 +215,21 @@ async function upsertToPostgREST(records: LemengItem[]): Promise<{ success: bool
   }
 }
 
-// ===== 查询数据库中的记录数（用于校验） =====
-async function getDbCount(): Promise<number> {
+// ===== 查询某品牌 active 商品数（完整性校验：按品牌而非全表，避免双品牌互相掩盖）=====
+async function getActiveCount(systemBookCode: string): Promise<number> {
   const headers: Record<string, string> = {};
   if (INSFORGE_ANON_KEY && INSFORGE_ANON_KEY.length > 20) {
     headers['Authorization'] = `Bearer ${INSFORGE_ANON_KEY}`;
     headers['apikey'] = INSFORGE_ANON_KEY;
   }
-
   try {
-    // 用 Prefer: count=exact + limit=1 触发 Content-Range，再从中解析总数
     headers['Prefer'] = 'count=exact';
     headers['Range'] = '0-0';
-
     const response = await fetchWithTimeout(
-      `${POSTGREST_URL}/dim_item?select=item_num`,
+      `${POSTGREST_URL}/dim_item?select=item_num&system_book_code=eq.${encodeURIComponent(systemBookCode)}&is_active=eq.true`,
       { method: 'GET', headers },
       15000
     );
-
-    // PostgREST 返回 Content-Range: 0-0/16710
     const contentRange = response.headers.get('content-range');
     if (contentRange) {
       const total = contentRange.split('/')[1];
@@ -241,6 +238,26 @@ async function getDbCount(): Promise<number> {
     return 0;
   } catch {
     return 0;
+  }
+}
+
+// ===== 软删除前置：把该品牌所有商品先标 inactive；随后 upsert 会把本次见到的标回 active =====
+// 仅在全量拉取成功（fetchComplete）时调用——partial run 不应误把没采到的当陈旧。
+async function markBrandInactive(systemBookCode: string): Promise<boolean> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json; charset=utf-8' };
+  if (INSFORGE_ANON_KEY && INSFORGE_ANON_KEY.length > 20) {
+    headers['Authorization'] = `Bearer ${INSFORGE_ANON_KEY}`;
+    headers['apikey'] = INSFORGE_ANON_KEY;
+  }
+  try {
+    const response = await fetchWithTimeout(
+      `${POSTGREST_URL}/dim_item?system_book_code=eq.${encodeURIComponent(systemBookCode)}`,
+      { method: 'PATCH', headers, body: JSON.stringify({ is_active: false }) },
+      30000
+    );
+    return response.status === 200 || response.status === 204;
+  } catch {
+    return false;
   }
 }
 
@@ -299,21 +316,22 @@ export async function collectItems(
   console.log(`[collect-items] Page 1: ${firstRecords.length} items`);
 
   const totalPages = Math.ceil(total / pageSize);
+  let failedPages = 0;
 
   for (let page = 2; page <= totalPages; page++) {
     const bodyStr = buildBody(branchId, page, pageSize);
     const pageResult = await callLemengApi(ENDPOINT_ITEM_LIST, authToken, bodyStr, branchNumsStr);
 
     if (!pageResult.ok || pageResult.data?.code !== 0) {
-      console.error(`[collect-items] Page ${page} failed: ${pageResult.error || pageResult.data?.message}`);
+      failedPages++;
+      console.error(`[collect-items] Page ${page}/${totalPages} failed: ${pageResult.error || pageResult.data?.message}`);
       continue;
     }
 
     const records = pageResult.data.result?.content || [];
     allRecords.push(...records);
     console.log(`[collect-items] Page ${page}/${totalPages}: ${records.length} items, accumulated ${allRecords.length}`);
-
-    if (records.length < pageSize) break;
+    // 按 totalPages 固定拉取到底，不在中间页提前 break（避免单页返回不满丢尾部）
   }
 
   console.log(`[collect-items] Fetched ${allRecords.length}/${total} items from API`);
@@ -339,7 +357,21 @@ export async function collectItems(
     console.log(`[collect-items] Deduped: removed ${dupCount} duplicates, ${dedupedRecords.length} unique items`);
   }
 
-  // ===== 写入 PostgreSQL（批量 upsert） =====
+  // ===== 品牌 & 拉取完整性判定 =====
+  const brand = String(dedupedRecords[0]?.system_book_code ?? firstRecords[0]?.system_book_code ?? '');
+  const fetchedCount = allRecords.length;
+  const fetchComplete = failedPages === 0 && fetchedCount >= total;
+  if (!fetchComplete) {
+    console.warn(`[collect-items] ⚠️ 拉取不完整: fetched ${fetchedCount}/${total}, failedPages=${failedPages}（本次不做软删除标 inactive）`);
+  }
+
+  // ===== 软删除前置（仅完整拉取）：该品牌全部先标 inactive，upsert 会把本次见到的标回 active =====
+  if (fetchComplete && brand) {
+    const marked = await markBrandInactive(brand);
+    console.log(`[collect-items] pre-mark ${brand} inactive: ${marked ? 'ok' : 'failed'}`);
+  }
+
+  // ===== 写入 PostgreSQL（批量 upsert；mapToDimItem 带 is_active=true）=====
   if (dedupedRecords.length > 0) {
     const batchSize = 100;
     let successCount = 0;
@@ -361,17 +393,17 @@ export async function collectItems(
     console.log(`[collect-items] Upserted ${successCount} items, failed ${failCount}`);
   }
 
-  // ===== 完整校验：对比数据库记录数与 API 总数 =====
-  const dbCount = await getDbCount();
-  result.dbCount = dbCount;
-  result.verified = dbCount >= total;
+  // ===== 完整校验：该品牌 active 数 vs API total（partial write / 丢页都能测出）=====
+  const activeCount = brand ? await getActiveCount(brand) : 0;
+  result.dbCount = activeCount;
+  result.verified = fetchComplete && activeCount >= total;
 
   if (result.verified) {
-    console.log(`[collect-items] ✅ 校验通过: DB ${dbCount} >= API ${total}`);
+    console.log(`[collect-items] ✅ 校验通过: ${brand} active ${activeCount} >= API ${total}`);
   } else {
-    console.warn(`[collect-items] ⚠️ 校验未通过: DB ${dbCount} < API ${total} (缺少 ${total - dbCount} 条)`);
+    console.warn(`[collect-items] ⚠️ 校验未通过: ${brand} active ${activeCount} < API ${total} (fetchComplete=${fetchComplete})`);
     if (!result.error) {
-      result.error = `校验未通过: DB ${dbCount} < API ${total}`;
+      result.error = `校验未通过: ${brand} active ${activeCount} < API ${total}`;
     }
   }
 
