@@ -97,19 +97,43 @@ export class SdkStore implements MonitorStore {
   }
 
   async upsertAlert(row: AlertRow): Promise<void> {
-    // select-then-update/insert：保证 occurrence_count 自增（与 MemoryStore 行为一致）
-    const existing = await this.getActiveAlert(row.alert_key);
-    if (existing) {
+    // 查任意状态的告警（不只 active）：恢复(resolved)后再次失败须"重开"为 active，
+    // 否则 insert 会撞 alert_key 唯一约束（duplicate key）。与 MemoryStore 覆盖语义一致。
+    const { data, error: qErr } = await this.client.database
+      .from('monitor_alerts')
+      .select('*')
+      .eq('alert_key', row.alert_key)
+      .maybeSingle();
+    if (qErr) throw new Error(`upsertAlert get: ${qErr.message}`);
+    const existing = (data as ActiveAlertRow | null) ?? null;
+    const nowIso = new Date().toISOString();
+
+    if (existing && existing.status === 'active') {
       const { error } = await this.client.database
         .from('monitor_alerts')
         .update({
           occurrence_count: existing.occurrence_count + 1,
-          last_seen_at: new Date().toISOString(),
+          last_seen_at: nowIso,
           context: row.context ?? existing.context,
         })
         .eq('alert_key', row.alert_key)
         .eq('status', 'active');
       if (error) throw new Error(`upsertAlert update: ${error.message}`);
+    } else if (existing) {
+      // resolved → 重开 active：重置计数/时间、清 last_notify_at 触发再通知
+      const { error } = await this.client.database
+        .from('monitor_alerts')
+        .update({
+          status: 'active',
+          occurrence_count: 1,
+          first_seen_at: nowIso,
+          last_seen_at: nowIso,
+          resolved_at: null,
+          last_notify_at: null,
+          context: row.context ?? existing.context,
+        })
+        .eq('alert_key', row.alert_key);
+      if (error) throw new Error(`upsertAlert reopen: ${error.message}`);
     } else {
       const { error } = await this.client.database
         .from('monitor_alerts')
