@@ -383,7 +383,7 @@ DuckDB /query〔改造：每请求独立连接 + AGENT_API_KEY〕
 
 | JOIN 场景 | 策略 | 权限保障 |
 |---|---|---|
-| DuckDB 内多表（明细↔明细） | 即席 | 各表建权限视图，行/列硬编码 |
+| DuckDB 内多表（明细↔明细） | 即席 | 各表建权限视图，行 branch_nums + 列成本组脱敏（成本列来源数据注册表 `dataset_columns.is_sensitive`，§4.3） |
 | PostgreSQL 内多表 | 即席 | RLS 全覆盖 |
 | 跨引擎·PG 小维表 JOIN DuckDB 明细 | 即席·小表搬运 | 网关用用户 JWT 查 PG（走 RLS）→ Appender 注入 DuckDB 临时表 → DuckDB 内 JOIN |
 | 跨引擎·两边大事实表 | 物化 | `/compute` 后台预算成宽表落 PG |
@@ -413,9 +413,15 @@ DuckDB /query〔改造：每请求独立连接 + AGENT_API_KEY〕
 - **注册形式（实测定稿）**：`definePluginEntry`（from `openclaw/plugin-sdk/plugin-entry`）+ `api.registerTool(factory, {name:"query_retail_data"})`，且 **factory 的 return 必须带 `name`**（`return {name, description, parameters, execute}`）。name 只放第二参数 → 静态 `inspect` 有 names 但运行时报 `plugin tool is malformed: missing non-empty name` → 工具**间歇对模型不可用** → 模型不调工具直接编造数据。factory 每 turn 跑，`ctx.requesterSenderId` 当轮可得。
 
 **组件（`openclaw/data-query-plugin/`，入仓 + `openclaw plugins install -l` link 安装）：**
-- `package.json`（`openclaw.extensions:["./index.js"]`）+ `openclaw.plugin.json`（`id`、`contracts.tools:["query_retail_data"]`、`activation.onStartup:true`）+ `index.js`。
-- `index.js`：`definePluginEntry`（from `openclaw/plugin-sdk/plugin-entry`）+ factory 注册 `query_retail_data(sql)`；execute 读 `toolContext.requesterSenderId` + `process.env.AGENT_API_KEY`，POST `http://insforge:7130/functions/agent-query` body `{sql, userId, agent_api_key}`，返回结果给 LLM。
-- `skills/retail-query/SKILL.md`：教 LLM——`retail_detail` 视图列（标注成本敏感组）+ 汇总表清单（report_daily_sales/category/weekly_trend）+ DuckDB 语法 + 书写规范（**查 `retail_detail` 视图、禁 `read_parquet`、强制 LIMIT、成本列可能被网关脱敏为 NULL 勿依赖**）。
+- `package.json`（`openclaw.extensions:["./dist/index.js"]`）+ `openclaw.plugin.json`（`id`、`contracts.tools:["query_retail_data","list_datasets"]`、`activation.onStartup:true`）+ `dist/index.js`（手写源码；`dist/` 被 .gitignore 覆盖，`git add -f` 强制入库）。
+- `dist/index.js`：`definePluginEntry`（from `openclaw/plugin-sdk/plugin-entry`）+ factory 注册两个工具：① `query_retail_data(sql)`（execute 读 `toolContext.requesterSenderId` + `process.env.AGENT_API_KEY`，POST `http://insforge:7130/functions/agent-query` body `{sql, userId, agent_api_key}`）；② `list_datasets()`（POST 同网关 `mode:"dictionary"` 拉活字典）。
+- `skills/retail-query/SKILL.md`：**纯规则**（绝不编造/忠于原话/日期标注/一问一查/成本列无权限=NULL）+ 明细vs汇总决策 + 引导「会话首查前调 `list_datasets` 看可用表/列」。**不再硬编码列清单/成本组/报表清单**——改由 `list_datasets` 活字典提供。
+
+**🆕 数据注册中心 = 取数知识单一事实源（迁移 031，2026-07-10）：**
+- `datasets`（name/engine[kind duckdb_view|pg_table]/source/kind[fact|summary|dim]/is_realtime/columns_typed/date_column/carry_enabled/exposed）+ `dataset_columns`（列 + `is_sensitive` 成本组 + `join_to` 关联提示）+ RPC `get_data_dictionary()`。
+- **双侧运行时实时消费**（取代原先 SKILL.md + agent-query 两处硬编码）：① **引擎侧** `agent-query` 的 glob/成本列/PG 路由表改读注册表（60s 缓存，读失败回退旧硬编码值兜底，绝不线下）；路由按 `engine`（pg_table→PG）。② **LLM 侧** `list_datasets` 工具每轮拉活字典。
+- **自动感知**：新增维表/报表 = `datasets` 插一行 → 两侧下一轮即见，**不改 markdown、内容变更不重部署**（插件/function 各只一次性改动）。
+- 退役臆想占位 `data_sources_meta`（REVOKE 写，同 `lemeng_items` 教训）。报表聚合定义仍归 `report_definitions`（B 不重建，只在字典曝光 summary 类）。维表 `carry_enabled=false`（直接查询 OK；JOIN 进明细待 C 子系统接小表搬运后翻 true）。
 
 **可信 userid 流（全局 + 后端按人鉴权）：**
 ```
