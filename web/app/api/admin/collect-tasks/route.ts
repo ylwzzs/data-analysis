@@ -30,7 +30,9 @@ export async function GET() {
       data_sources(id, name, auth_type),
       collect_logs(status, started_at, rows_collected, error_message)
     `)
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false })
+    .order('started_at', { ascending: false, referencedTable: 'collect_logs' })
+    .limit(5, { referencedTable: 'collect_logs' });
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
