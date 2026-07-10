@@ -237,16 +237,18 @@ export async function collectBranches(authToken: string, companyId: number, page
   }
   console.log(`[collect-branches] Fetched ${allRecords.length}/${total}`);
 
-  // 去重（system_id 品牌内唯一）
+  // 去重（system_id 品牌内唯一）；system_id 为空的特殊门店无法建 PK（也 JOIN 不上明细），跳过并计入
   const seen = new Set<string>();
   const deduped: Branch[] = [];
+  let skippedNoKey = 0;
   for (const b of allRecords) {
-    if (b.system_id == null) continue;
+    if (b.system_id == null) { skippedNoKey++; continue; }
     const k = String(b.system_id);
     if (seen.has(k)) continue;
     seen.add(k);
     deduped.push(b);
   }
+  if (skippedNoKey > 0) console.log(`[collect-branches] 跳过 ${skippedNoKey} 个 system_id 为空的特殊门店（无 branch_num，不入库）`);
 
   const fetchComplete = failedPages === 0 && allRecords.length >= total;
   if (!fetchComplete) console.warn(`[collect-branches] ⚠️ 拉取不完整 fetched ${allRecords.length}/${total} failedPages=${failedPages}`);
@@ -272,13 +274,14 @@ export async function collectBranches(authToken: string, companyId: number, page
     console.log(`[collect-branches] Upserted ${successCount}, failed ${upsertFailures}`);
   }
 
-  // 完整校验：fetchComplete && 无 upsert 失败 && 该品牌 active 数 >= total
+  // 完整校验：fetchComplete && 无 upsert 失败 && 该品牌 active 数 >= 可入库数(total - system_id为空的)
+  const expected = total - skippedNoKey;
   const activeCount = await getActiveCount(brand);
   result.dbCount = activeCount;
-  result.verified = fetchComplete && upsertFailures === 0 && activeCount >= total;
+  result.verified = fetchComplete && upsertFailures === 0 && activeCount >= expected;
   if (!result.verified && !result.error) {
-    result.error = `校验未通过: ${brand} active ${activeCount}/${total} (fetchComplete=${fetchComplete}, upsertFailures=${upsertFailures})`;
+    result.error = `校验未通过: ${brand} active ${activeCount}/${expected} (total ${total}, skippedNoKey ${skippedNoKey}, fetchComplete=${fetchComplete}, upsertFailures=${upsertFailures})`;
   }
-  console.log(`[collect-branches] ${result.verified ? '✅' : '⚠️'} ${brand} active ${activeCount}/${total}`);
+  console.log(`[collect-branches] ${result.verified ? '✅' : '⚠️'} ${brand} active ${activeCount}/${expected} (total ${total}, skip ${skippedNoKey})`);
   return result;
 }
