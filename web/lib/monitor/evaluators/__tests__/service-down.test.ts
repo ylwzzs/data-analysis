@@ -12,6 +12,7 @@ const deps = (ok: boolean, extra: Partial<ProbeOutcome> = {}): EvalDeps => ({
   now: new Date('2026-07-08T10:00:00Z'),
   probe: async () => ({ ok, latencyMs: 5, status: ok ? 200 : undefined, ...extra } as ProbeOutcome),
   getCredentialToken: async () => null,
+  getCollectLogs: async () => [],
 });
 
 describe('evalServiceDown', () => {

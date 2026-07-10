@@ -23,6 +23,7 @@ const deps = (token: string | null): EvalDeps => ({
   now,
   probe: async () => ({ ok: true, latencyMs: 1 }),
   getCredentialToken: async () => token,
+  getCollectLogs: async () => [],
 });
 
 describe('evalTokenExpire', () => {

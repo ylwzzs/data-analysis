@@ -31,6 +31,16 @@ function buildDeps(): EvalDeps {
         return null;
       }
     },
+    getCollectLogs: async (taskId, limit) => {
+      const { data, error } = await client.database
+        .from('collect_logs')
+        .select('status, started_at, error_message')
+        .eq('task_id', taskId)
+        .order('started_at', { ascending: false })
+        .limit(limit);
+      if (error) throw new Error(`getCollectLogs: ${error.message}`);
+      return (data ?? []) as Array<{ status: string; started_at: string; error_message: string | null }>;
+    },
   };
 }
 

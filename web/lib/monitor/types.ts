@@ -41,6 +41,8 @@ export interface EvalDeps {
   now: Date;
   probe: (url: string, opts?: { timeoutMs?: number; method?: string }) => Promise<ProbeOutcome>;
   getCredentialToken: (sourceId: string) => Promise<string | null>;
+  // collect_fail 用：取某采集任务最近 limit 条 collect_logs（最新在前）
+  getCollectLogs: (taskId: string, limit: number) => Promise<Array<{ status: string; started_at: string; error_message: string | null }>>;
 }
 
 export interface ProbeOutcome {
