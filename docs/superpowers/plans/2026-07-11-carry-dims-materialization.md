@@ -9,7 +9,8 @@
 **Tech Stack:** duckdb-service（services/server.js，pg + duckdb）/ S3 parquet / agent-query function / node-cron scheduler / Next.js routes。
 
 > **测试约定**：无单测，靠 psql/curl/企微验证。每任务：实现 → 验证 → commit。
-> **安全**：dim_item.item_cost_price 是成本敏感列——carry 导出为 NULL（维表 parquet 不含成本价）。
+> **维表定义**：注册表驱动——`datasets.kind='dim' AND carry_enabled=true`，动态取、不硬编码（新增维表登记即自动 carry）。
+> **安全**：维表 carry **全量**（含敏感列），列级脱敏在 view builder per-user（can_see_cost，与 retail_detail 成本列同机制）；parquet 全量在 S3 受控（内网+key，agent-query 唯一入口脱敏）。
 
 ---
 
@@ -32,21 +33,21 @@
 
 ```javascript
 // C3 carry: PG 维表 → S3 parquet（pgPool 读 → DuckDB COPY；不 attach、DuckDB 不连 PG）。
-// dim_item.item_cost_price 成本敏感 → 导出 NULL（维表 parquet 不含成本价）。
+// 维表清单 = 注册表驱动（datasets kind='dim' AND carry_enabled=true），动态、不硬编码。
+// 全量读（含敏感列）；列级脱敏在 agent-query view builder per-user 做（can_see_cost），与 retail_detail 一致。
 app.post("/carry-dims", async (req, res) => {
   const key = req.headers["x-agent-key"];
   if (!AGENT_API_KEY || key !== AGENT_API_KEY) return res.status(401).json({ error: "unauthorized" });
   if (!pgPool) return res.status(500).json({ error: "PostgreSQL not configured" });
   const startedAt = Date.now();
-  const dims = [
-    { name: "dim_branch", sql: "SELECT system_book_code, branch_num, branch_id, branch_code, branch_name, region_name, province, city, district, address, phone, longitude, latitude FROM dim_branch WHERE is_active" },
-    { name: "dim_item",   sql: "SELECT system_book_code, item_num, item_code, bar_code, item_name, category_code, category_name, category_path, top_category, item_brand, department, item_unit, item_regular_price, NULL::text AS item_cost_price, supplier_name, item_tags FROM dim_item WHERE is_active" },
-    { name: "dim_region", sql: "SELECT region_name, war_zone, sub_region, display_name FROM dim_region" },
-  ];
-  const results = [];
   try {
-    for (const d of dims) {
-      const { rows } = await pgPool.query(d.sql);
+    // 动态取维表清单（注册表单一事实源；新增维表登记即自动 carry）
+    const { rows: dimDs } = await pgPool.query(
+      "SELECT name FROM datasets WHERE kind='dim' AND carry_enabled=true ORDER BY name"
+    );
+    const results = [];
+    for (const d of dimDs) {
+      const { rows } = await pgPool.query(`SELECT * FROM "${d.name}"`); // 全量，含敏感列
       if (!rows.length) { results.push({ name: d.name, records: 0 }); continue; }
       const schema = Object.keys(rows[0]);
       const colsDef = schema.map(c => `"${c}" VARCHAR`).join(", ");
@@ -65,7 +66,7 @@ app.post("/carry-dims", async (req, res) => {
     res.json({ success: true, duration_ms: Date.now() - startedAt, results });
   } catch (err) {
     console.error("[carry-dims] Error:", err.message);
-    res.status(500).json({ error: err.message, results });
+    res.status(500).json({ error: err.message });
   }
 });
 ```
@@ -90,7 +91,7 @@ ssh -i "/Users/Duo/WPS 云文档/其他/ShanHai-OPS.pem" root@data.shanhaiyiguo.
 ```
 Expected: `{ success: true, results: [{name:"dim_branch", records:385, ...}, {name:"dim_item", records:40963, ...}, {name:"dim_region", records:19, ...}] }`。
 
-- [ ] **Step 4: 验证 S3 parquet 存在 + dim_item 无成本价**
+- [ ] **Step 4: 验证 S3 parquet 含全量（含 item_cost_price；per-user 脱敏在 view builder）**
 
 ```bash
 ssh -i "/Users/Duo/WPS 云文档/其他/ShanHai-OPS.pem" root@data.shanhaiyiguo.com \
@@ -98,7 +99,7 @@ ssh -i "/Users/Duo/WPS 云文档/其他/ShanHai-OPS.pem" root@data.shanhaiyiguo.
    curl -sf -X POST http://duckdb:9000/query -H "Content-Type: application/json" -H "x-agent-key: $INSFORGE_API_KEY" \
      -d "{\"sql\":\"SELECT count(*) c, count(item_cost_price) cost_nonnull FROM read_parquet('"'"'s3://lemeng-datasource/dims/dim_item.parquet'"'"')\"}"'
 ```
-Expected: dim_item 行数 ~40963，**cost_nonnull=0**（item_cost_price 全 NULL，敏感列已脱敏）。
+Expected: dim_item 行数 ~40963，**cost_nonnull>0**（parquet 带全量成本价；per-user 脱敏在 view builder，Task 3 验证有/无权限差异）。
 
 ---
 
@@ -118,6 +119,12 @@ WHERE name IN ('dim_branch','dim_item','dim_region');
 UPDATE datasets SET source='s3://lemeng-datasource/dims/dim_branch.parquet' WHERE name='dim_branch';
 UPDATE datasets SET source='s3://lemeng-datasource/dims/dim_item.parquet'   WHERE name='dim_item';
 UPDATE datasets SET source='s3://lemeng-datasource/dims/dim_region.parquet' WHERE name='dim_region';
+
+-- dataset_columns: dim_item.item_cost_price 标 is_sensitive（view builder 据此对维表列 per-user 脱敏，与 retail_detail 成本列同机制）
+INSERT INTO dataset_columns (dataset_name, name, data_type, semantic_group, is_sensitive, join_to, description, ordinal) VALUES
+  ('dim_item','item_cost_price','TEXT','金额',TRUE,NULL,'成本价（can_see_cost=false→NULL，view builder 脱敏）',14)
+ON CONFLICT (dataset_name, name) DO UPDATE SET is_sensitive=EXCLUDED.is_sensitive, description=EXCLUDED.description;
+
 DO $$ BEGIN RAISE NOTICE 'Migration 034_dim_carry_datasets applied'; END $$;
 ```
 
@@ -150,21 +157,28 @@ git push origin main
 
 - [ ] **Step 1: loadRegistry 增加 dimCarry（维表 parquet glob 列表）**
 
-在 `loadRegistry()`（约 line 28-55）的 `REG_CACHE = { retailGlob, costColumns, pgTables }` 改为加 `dimCarry`：
+在 `loadRegistry()`（约 line 28-55）扩展：取 carry 维表清单 + 每个维表的敏感列（dataset_columns is_sensitive by dataset_name）。datasets 查询带 `carry_enabled` 字段（`/datasets?select=name,engine,source,kind,carry_enabled`）：
 ```javascript
-  let dimCarry = []; // [{name, glob}] carry 物化的维表（duckdb_view + carry_enabled）
+  let dimCarry = []; // [{name, glob, sensitiveColumns:[]}] carry 物化的维表
   // ...在 fetch datasets 后：
   const retailRow = ds.find((d) => d.name === "retail_detail");
   if (retailRow && retailRow.source) retailGlob = retailRow.source;
-  const dimRows = ds.filter((d) => d.engine === "duckdb_view" && d.kind === "dim");
-  if (dimRows.length) dimCarry = dimRows.map((d) => ({ name: d.name, glob: d.source }));
+  const dimRows = ds.filter((d) => d.engine === "duckdb_view" && d.kind === "dim" && d.carry_enabled);
+  for (const d of dimRows) {
+    let sensitiveColumns = [];
+    try {
+      const scRes = await fetch(POSTGREST_URL + "/dataset_columns?select=name&dataset_name=eq." + encodeURIComponent(d.name) + "&is_sensitive=eq.true", { headers });
+      if (scRes.ok) sensitiveColumns = (await scRes.json()).map((c) => c.name);
+    } catch (e) { /* 读失败空数组，不阻断 */ }
+    dimCarry.push({ name: d.name, glob: d.source, sensitiveColumns });
+  }
   // ...
   REG_CACHE = { retailGlob, costColumns, pgTables, dimCarry };
 ```
 
 - [ ] **Step 2: runDuckdb 建 dim_* TEMP VIEW（read_parquet 维表 parquet）**
 
-在 `runDuckdb()`（约 line 120-141）的 viewSql 拼接里，retail_detail 视图后追加 dim_* 视图：
+在 `runDuckdb()`（约 line 120-141）的 viewSql 拼接里，retail_detail 视图后追加 dim_* 视图（每个维表按其 sensitiveColumns per-user 脱敏，与 retail_detail 成本列同机制）：
 ```javascript
 async function runDuckdb(userSelect, perms, reg) {
   const allBranches = !Array.isArray(perms.branch_nums) || perms.branch_nums.length === 0 || perms.branch_nums.includes("*");
@@ -176,9 +190,12 @@ async function runDuckdb(userSelect, perms, reg) {
     "CREATE OR REPLACE TEMP VIEW retail_detail AS " +
     "SELECT * REPLACE (" + replaceList + ") " +
     "FROM read_parquet('" + reg.retailGlob + "') " + branchFilter + ";\n";
-  // dim_* carry 视图（字典，无过滤；维表 parquet 已不含成本价）
+  // dim_* carry 视图：无行过滤（字典全可见）；敏感列（如 dim_item.item_cost_price）按 can_see_cost CASE 脱敏
   for (const d of (reg.dimCarry || [])) {
-    viewSql += "CREATE OR REPLACE TEMP VIEW " + d.name + " AS SELECT * FROM read_parquet('" + d.glob + "');\n";
+    const sens = d.sensitiveColumns || [];
+    const dimReplace = sens.map((c) => `CASE WHEN ${canSee} THEN "${c}" ELSE NULL END AS "${c}"`).join(", ");
+    const replaceClause = dimReplace ? `SELECT * REPLACE (${dimReplace}) ` : "SELECT * ";
+    viewSql += "CREATE OR REPLACE TEMP VIEW " + d.name + " AS " + replaceClause + "FROM read_parquet('" + d.glob + "');\n";
   }
   const combined = viewSql + "\n" + userSelect;
   // ...（fetch /query 不变）
@@ -195,17 +212,22 @@ ssh -i "/Users/Duo/WPS 云文档/其他/ShanHai-OPS.pem" root@data.shanhaiyiguo.
   "cd /opt/data-analytics-platform/deploy && docker exec deploy-deno-1 rm -rf /deno-dir/* && docker compose restart deno"
 ```
 
-- [ ] **Step 4: 验证 dim_* 可查 + 明细 JOIN dim_***
+- [ ] **Step 4: 验证 dim_* 可查 + 明细 JOIN dim_* + 维表敏感列 per-user 脱敏**
 
 ```bash
-# dim_branch 单独查（走 DuckDB parquet）
+# 1) dim_branch 单独查（走 DuckDB parquet）
 curl -s -X POST https://data.shanhaiyiguo.com/functions/agent-query -H "Content-Type: application/json" \
   -d '{"sql":"SELECT count(*) c FROM dim_branch","userId":"ZhangDuo","agent_api_key":"'$AGENT_API_KEY'"}'
-# 明细 JOIN dim_branch（跨引擎已解决）
+# 2) 明细 JOIN dim_branch（跨引擎已解决）
 curl -s -X POST https://data.shanhaiyiguo.com/functions/agent-query -H "Content-Type: application/json" \
   -d '{"sql":"SELECT b.region_name, count(*) orders FROM retail_detail d JOIN dim_branch b ON d.branch_num=b.branch_num GROUP BY 1 ORDER BY 2 DESC LIMIT 5","userId":"ZhangDuo","agent_api_key":"'$AGENT_API_KEY'"}'
+# 3) 维表敏感列 per-user 脱敏：ZhangDuo(can_see_cost=true) 看得到；YangWei(false) NULL
+curl -s -X POST https://data.shanhaiyiguo.com/functions/agent-query -H "Content-Type: application/json" \
+  -d '{"sql":"SELECT count(item_cost_price) cost_nonnull FROM dim_item","userId":"ZhangDuo","agent_api_key":"'$AGENT_API_KEY'"}'
+curl -s -X POST https://data.shanhaiyiguo.com/functions/agent-query -H "Content-Type: application/json" \
+  -d '{"sql":"SELECT count(item_cost_price) cost_nonnull FROM dim_item","userId":"YangWei","agent_api_key":"'$AGENT_API_KEY'"}'
 ```
-Expected: dim_branch count=385；JOIN 返回各 region 订单数（不再报"跨引擎"错）。
+Expected: 1) dim_branch count=385；2) JOIN 返回各 region 订单数（不再报"跨引擎"错）；3) ZhangDuo cost_nonnull>0（有权限），YangWei cost_nonnull=0（无权限 NULL）。
 
 - [ ] **Step 5: Commit + push**
 
@@ -329,7 +351,7 @@ git push origin main && gh run watch
 ## Self-Review（已做）
 
 - **Spec coverage**：spec C3 ①导出（Task 1）/ ②触发定时+回调（Task 4/5）/ ③查询 view builder（Task 3）/ ④新鲜度（回调+定时覆盖）/ ⑤datasets（Task 2）。✅
-- **安全**：dim_item.item_cost_price carry 导出 NULL（Task 1 SQL + Task 1 Step 4 验证 cost_nonnull=0）。✅
+- **安全**：维表 carry 全量（含 item_cost_price），列级脱敏在 view builder per-user（can_see_cost，Task 3 Step 2），与 retail_detail 成本列同机制；parquet 全量在 S3 受控（内网+key，agent-query 唯一入口脱敏）。✅
 - **绕过风险**：DuckDB 查询路径只 read_parquet 维表 parquet，不连 PG（无 attach）。✅
 - **Placeholder scan**：无 TBD；端点/迁移/view builder/回调代码完整。✅
 - **类型一致**：`REG_CACHE.dimCarry`（Task 3 Step 1）↔ `reg.dimCarry`（Step 2）；`/carry-dims` 端点名跨 Task 一致。✅
