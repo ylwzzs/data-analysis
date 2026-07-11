@@ -44,7 +44,10 @@ metadata:
 - sr_mode：标准报表（业绩/周报/品类排行）→ template + template_key；个性化 → sql + query_intent
 - run_as/delivery_to 自动=你本人（钉死，不可改）
 
-cron 触发时（自动 agent turn）：按 query_intent/template 用 `query_retail_data` 查（自动按你的权限裁剪）→ 调 `push_report` 推送（content=结果，收件人自动从绑定取）。**不要**手动用 cron 工具建。
+cron 触发时（自动 agent turn）务必高效、不重复：
+- **一问一查**：先调一次 `list_datasets` 看列，然后**一条**聚合 SQL（COUNT/SUM/GROUP BY）搞定。**禁止**反复 query 试错（列名一次看清，别查 5 次以上）。
+- **只用 `push_report` 推送一次**（收件人自动从绑定取）。**禁用 `send_notify`**——cron turn 无 @sender 会推默认组且与 push_report 重复推送。
+- **不要**手动用 cron 工具建定时（已被禁用，走 create_scheduled_report）。
 
 **删除定时**：用户说"取消/删除某定时"→ 调 `delete_scheduled_report`(cron_job_id，建时返回的 id)。
 
