@@ -11,6 +11,11 @@ ALTER TABLE report_daily_sales FORCE ROW LEVEL SECURITY;
 ALTER TABLE report_daily_category FORCE ROW LEVEL SECURITY;
 
 -- #2 修复：delivery_to 钉死=owner（DB 级约束，防 owner UPDATE 改推送收件人）
-ALTER TABLE scheduled_reports ADD CONSTRAINT delivery_is_owner CHECK (delivery_to = owner_wecom_id);
+-- 幂等：PG ADD CONSTRAINT 不支持 IF NOT EXISTS，用 DO 块判断（migrate.sh 每次重跑全部迁移）
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='delivery_is_owner' AND conrelid='scheduled_reports'::regclass) THEN
+    ALTER TABLE scheduled_reports ADD CONSTRAINT delivery_is_owner CHECK (delivery_to = owner_wecom_id);
+  END IF;
+END $$;
 
 DO $$ BEGIN RAISE NOTICE 'Migration 037_security_fixes applied'; END $$;
