@@ -14,7 +14,9 @@
   "contracts": {
     "tools": [
       "query_retail_data",
-      "list_datasets"
+      "list_datasets",
+      "create_scheduled_report",
+      "push_report"
     ]
   },
   "skills": [

@@ -36,6 +36,14 @@ metadata:
 
 维表（dim_item/dim_branch/dim_region）可直接查做 lookup（如"有哪些门店/战区"）。按战区/品类聚合历史 → 用汇总表 JOIN 维表；明细级 × 维度归类待 carry（C3）。
 
+## 定时推送应用（用户说"每天X点推Y"时）
+
+两步（agent 协调）：
+1. 调 **cron 工具**（action=add）：建 cron job（schedule=用户时间，如每天9点 `{kind:'cron',expr:'0 9 * * *',tz:'Asia/Shanghai'}`；sessionTarget=isolated；payload.kind=agentTurn；payload.message="查询 Y 并用 push_report 推送"）。拿到 job id。
+2. 调 **create_scheduled_report**（cron_job_id=上一步 id, name, sr_mode=template/sql, template_key 或 query_intent）。run_as/delivery_to 自动=你本人（钉死）。
+
+cron 触发时（自动 agent turn）：按 query_intent/template 用 `query_retail_data` 查（自动按你的权限裁剪）→ 调 `push_report`（content=结果，收件人自动从绑定取，无需也不能手填）。
+
 ## 呈现
 
 中文回答，关键数字带单位 + 日期。**直接给结果**，不要"查询成功/我来查一下"等铺垫。truncated 时改用聚合/加 LIMIT 重查，或说明"共 N 条，此处列前 50"。

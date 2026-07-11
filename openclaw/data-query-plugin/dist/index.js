@@ -12,6 +12,8 @@ import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 
 const GATEWAY_URL =
   process.env.AGENT_QUERY_URL || "http://insforge:7130/functions/agent-query";
+const NOTIFY_URL =
+  process.env.NOTIFY_URL || "http://insforge:7130/functions/wecom-notify";
 const MAX_ROWS_TO_MODEL = 50;
 
 const TOOL_NAME = "query_retail_data";
@@ -58,6 +60,49 @@ async function fetchDictionary(userId) {
   try { body = await resp.json(); } catch { body = {}; }
   if (!resp.ok || body.success !== true) return { error: body.error || "网关返回 HTTP " + resp.status };
   return body.dictionary;
+}
+
+// ===== C4 定时应用：create_scheduled_report（写绑定）+ push_report（强制 delivery_to 推送）=====
+const CREATE_SR_NAME = "create_scheduled_report";
+const CREATE_SR_PARAMS = {
+  type: "object",
+  properties: {
+    cron_job_id: { type: "string", description: "先用 cron 工具 action=add 建 cron job 拿到的 job id" },
+    name: { type: "string" },
+    sr_mode: { type: "string", enum: ["template", "sql"], description: "template=标准报表模板; sql=自然语言查询" },
+    template_key: { type: "string" },
+    query_intent: { type: "string" },
+  },
+  required: ["cron_job_id", "name", "sr_mode"],
+  additionalProperties: false,
+};
+const PUSH_NAME = "push_report";
+const PUSH_PARAMS = {
+  type: "object",
+  properties: {
+    content: { type: "string", description: "推送正文（markdown）" },
+    title: { type: "string" },
+  },
+  required: ["content"],
+  additionalProperties: false,
+};
+
+async function gatewayPost(body) {
+  const resp = await fetch(GATEWAY_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...body, agent_api_key: process.env.AGENT_API_KEY }),
+  });
+  return resp.json().catch(() => ({}));
+}
+
+async function pushNotify({ to, content, title }) {
+  const resp = await fetch(NOTIFY_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ agent_api_key: process.env.AGENT_API_KEY, content, title, touser: to, msgtype: "markdown" }),
+  });
+  return resp.json().catch(() => ({}));
 }
 
 async function executeQuery({ sql }, userId, cronSessionKey) {
@@ -207,6 +252,46 @@ export default definePluginEntry({
         };
       },
       { name: LIST_TOOL_NAME },
+    );
+
+    // C4 create_scheduled_report：写绑定（agent 先用 cron 工具 add 建 cron 拿 job_id，再调本工具）。run_as=owner 钉死。
+    api.registerTool(
+      (ctx) => {
+        const owner = ctx && ctx.requesterSenderId;
+        return {
+          name: CREATE_SR_NAME,
+          description: "建定时应用绑定（cron_job_id→run_as=你）。先用 cron 工具 action=add 建 cron job 拿到 job id，再调本工具。run_as/delivery_to 钉死=你本人，cron 触发时按你的权限查+推给你。",
+          parameters: CREATE_SR_PARAMS,
+          execute: (_id, params) => {
+            const obj = typeof params === "string" ? JSON.parse(params) : (params || {});
+            if (!owner) return { error: "无法识别创建者（非会话上下文）" };
+            return gatewayPost({ mode: "upsert_scheduled", userId: owner, cron_job_id: obj.cron_job_id, name: obj.name, sr_mode: obj.sr_mode, template_key: obj.template_key, query_intent: obj.query_intent });
+          },
+        };
+      },
+      { name: CREATE_SR_NAME },
+    );
+
+    // C4 push_report：cron turn 推送。cron_job_id 从 ctx.sessionKey 可信 parse（不信参数）；收件人强制绑定查。
+    api.registerTool(
+      (ctx) => {
+        return {
+          name: PUSH_NAME,
+          description: "推送定时报表（cron turn 里查完数据后调）。收件人强制从绑定查（cron_job_id→delivery_to），不信参数里的收件人。job_id 从当前 cron session 自动取。",
+          parameters: PUSH_PARAMS,
+          execute: async (_id, params) => {
+            const obj = typeof params === "string" ? JSON.parse(params) : (params || {});
+            const m = ((ctx && ctx.sessionKey) || "").match(/cron:([^:]+)/);
+            const cronJobId = m ? m[1] : null;
+            if (!cronJobId) return { error: "无法识别当前 cron job（sessionKey 无 cron:<jobid>，非 cron turn？）" };
+            const lookup = await gatewayPost({ mode: "lookup_delivery", cron_job_id: cronJobId });
+            const to = lookup.delivery_to;
+            if (!to) return { error: "未找到该 cron job 的定时应用绑定（delivery_to）" };
+            return pushNotify({ to, content: obj.content, title: obj.title });
+          },
+        };
+      },
+      { name: PUSH_NAME },
     );
   },
 });

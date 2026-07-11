@@ -258,6 +258,31 @@ module.exports = async function (req) {
     }
   }
 
+  // C4: 定时应用管理 mode（plugin create_scheduled_report/push_report 调；SECURITY DEFINER RPC）
+  if (body.mode === "upsert_scheduled") {
+    if (!userId) return json({ error: "missing userId (owner) for upsert_scheduled" }, 400);
+    try {
+      const r = await fetch(POSTGREST_URL + "/rpc/insert_scheduled_report", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + (await serviceJwt()), "Content-Type": "application/json" },
+        body: JSON.stringify({ p_owner: userId, p_cron_job_id: body.cron_job_id, p_name: body.name, p_mode: body.sr_mode, p_template_key: body.template_key || null, p_query_intent: body.query_intent || null }),
+      });
+      const id = await r.json();
+      return json({ success: true, id });
+    } catch (e) { return json({ error: "upsert_failed", detail: String(e) }, 502); }
+  }
+  if (body.mode === "lookup_delivery") {
+    try {
+      const r = await fetch(POSTGREST_URL + "/rpc/get_scheduled_delivery_to", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + (await serviceJwt()), "Content-Type": "application/json" },
+        body: JSON.stringify({ p_cron_job_id: body.cron_job_id }),
+      });
+      const to = await r.json();
+      return json({ success: true, delivery_to: to });
+    } catch (e) { return json({ error: "lookup_failed", detail: String(e) }, 502); }
+  }
+
   if (!sql || !userId) return json({ error: "missing sql/userId" }, 400);
 
   // ② 授权
