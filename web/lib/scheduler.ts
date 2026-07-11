@@ -367,8 +367,8 @@ async function executeTask(task: {
       })
       .eq('id', task.id);
 
-    // C1: 采集成功后自动算报表（service 身份，失败不阻塞采集）
-    if (!lastResult.error && dates && dates.length === 2) {
+    // C1: 采集后算报表（success/partial 都触发；service 身份；compute 读已落 parquet 幂等，下次覆盖。spec success/partial）
+    if (dates && dates.length === 2) {
       await triggerCompute(client, dates, task.id);
     }
 

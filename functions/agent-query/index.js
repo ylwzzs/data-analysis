@@ -223,6 +223,9 @@ module.exports = async function (req) {
   const sql = body.sql;
   const key = body.agent_api_key || req.headers.get("x-agent-key");
 
+  // ① 认证（前移到 cronSessionKey 反查前，#6：避免未认证请求驱动 serviceJwt RPC 轻量 DoS）
+  if (!AGENT_API_KEY || key !== AGENT_API_KEY) return json({ error: "unauthorized" }, 401);
+
   // C4: cron turn 无 userId（requesterSenderId 空）→ 从 cronSessionKey 反查 scheduled_reports.run_as
   // cron turn ctx.sessionKey = agent:<agentId>:cron:<jobid>:run:<runId>（openclaw 源码确认）
   if (!userId && body.cronSessionKey) {
@@ -239,9 +242,6 @@ module.exports = async function (req) {
       } catch (e) { /* 反查失败，userId 仍空，下面报 missing */ }
     }
   }
-
-  // ① 认证
-  if (!AGENT_API_KEY || key !== AGENT_API_KEY) return json({ error: "unauthorized" }, 401);
 
   // ①.5 dictionary 模式（LLM list_datasets 工具拉字典；只需认证，不需 per-user 权限）
   if (body.mode === "dictionary") {
