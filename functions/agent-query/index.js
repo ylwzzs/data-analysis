@@ -52,7 +52,7 @@ async function loadRegistry() {
         dimCarry.push({ name: d.name, glob: d.source, sensitiveColumns });
       }
     }
-    const colRes = await fetch(POSTGREST_URL + "/dataset_columns?select=name&is_sensitive=eq.true", { headers });
+    const colRes = await fetch(POSTGREST_URL + "/dataset_columns?select=name&dataset_name=eq.retail_detail&is_sensitive=eq.true", { headers });
     if (colRes.ok) {
       const cols = await colRes.json();
       if (Array.isArray(cols) && cols.length) costColumns = cols.map((c) => c.name);
