@@ -560,6 +560,48 @@ app.post("/compute", async (req, res) => {
   }
 });
 
+// C3 carry: PG 维表 → S3 parquet（pgPool 读 → DuckDB COPY；不 attach、DuckDB 不连 PG）。
+// 维表清单 = 注册表驱动（datasets kind='dim' AND carry_enabled=true），动态、不硬编码。
+// 全量读（含敏感列）；列级脱敏在 agent-query view builder per-user 做（can_see_cost），与 retail_detail 一致。
+app.post("/carry-dims", async (req, res) => {
+  // AGENT_API_KEY 校验（同 /query）
+  const reqKey = req.headers["x-agent-key"]
+    || (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+  if (!AGENT_API_KEY || reqKey !== AGENT_API_KEY) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  if (!pgPool) return res.status(500).json({ error: "PostgreSQL not configured" });
+  const startedAt = Date.now();
+  try {
+    // 动态取维表清单（注册表单一事实源；新增维表登记即自动 carry）
+    const { rows: dimDs } = await pgPool.query(
+      "SELECT name FROM datasets WHERE kind='dim' AND carry_enabled=true ORDER BY name"
+    );
+    const results = [];
+    for (const d of dimDs) {
+      const { rows } = await pgPool.query(`SELECT * FROM "${d.name}"`); // 全量，含敏感列
+      if (!rows.length) { results.push({ name: d.name, records: 0 }); continue; }
+      const schema = Object.keys(rows[0]);
+      const colsDef = schema.map(c => `"${c}" VARCHAR`).join(", ");
+      await runQuery(`CREATE OR REPLACE TABLE carry_temp (${colsDef})`);
+      for (let i = 0; i < rows.length; i += 1000) {
+        const batch = rows.slice(i, i + 1000);
+        const values = batch.map(r => "(" + schema.map(c => escapeSQL(r[c] == null ? null : String(r[c]))).join(", ") + ")").join(", ");
+        await runQuery(`INSERT INTO carry_temp VALUES ${values}`);
+      }
+      const s3Path = `s3://${S3_BUCKET}/dims/${d.name}.parquet`;
+      await runQuery(`COPY carry_temp TO '${s3Path}' (FORMAT PARQUET)`);
+      const cnt = await runQuery("SELECT CAST(COUNT(*) AS INTEGER) c FROM carry_temp");
+      results.push({ name: d.name, records: cnt[0]?.c || rows.length, path: s3Path });
+      console.log(`[carry-dims] ${d.name}: ${cnt[0]?.c || rows.length} rows → ${s3Path}`);
+    }
+    res.json({ success: true, duration_ms: Date.now() - startedAt, results });
+  } catch (err) {
+    console.error("[carry-dims] Error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 字段转换函数
 function transformRow(row, mapping) {
   const result = {};
