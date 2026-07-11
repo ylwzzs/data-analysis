@@ -12,6 +12,7 @@ import { runServiceDownBucket, runCollectTokenBucket, runHourlyBucket, runDailyB
 
 const INSFORGE_API_BASE = process.env.INSFORGE_API_BASE!;
 const INSFORGE_API_KEY = process.env.INSFORGE_API_KEY!;
+const DUCKDB_URL = process.env.DUCKDB_URL || "http://duckdb:9000";
 
 // 调度器状态：用 globalThis 持有，跨 chunk 单例。
 // Next.js 把 instrumentation.ts 与 route handler 打包进不同 chunk，各自有独立模块作用域，
@@ -118,6 +119,53 @@ function registerTask(task: {
   });
 
   scheduledJobs.set(task.id, job);
+}
+
+// C1: 采集 verified 后触发报表计算（service 身份，无 perms；算全量写 report_*，查询时裁剪）。
+// daily/category 用采集日期；weekly 滚动 8 周（upsert 幂等）。失败记 compute_logs + 企微告警，不阻塞采集。
+function subtractDays(ymd: string, days: number): string {
+  const dt = new Date(ymd + "T00:00:00Z");
+  dt.setUTCDate(dt.getUTCDate() - days);
+  return dt.toISOString().split("T")[0];
+}
+
+async function triggerCompute(client: any, dates: string[], taskId: string) {
+  // dates = ['YYYY-MM-DD','YYYY-MM-DD']（getTodayChina/getYesterdayChina 格式），直接传 /compute（内部转 compact）
+  const reports = [
+    { type: "daily_sales",    dateFrom: dates[0],                   dateTo: dates[1] },
+    { type: "daily_category", dateFrom: dates[0],                   dateTo: dates[1] },
+    { type: "weekly_trend",   dateFrom: subtractDays(dates[0], 56), dateTo: dates[1] },
+  ];
+  for (const r of reports) {
+    const startedAt = new Date();
+    let status = "failed", rowsWritten: number | null = null, durationMs: number | null = null, error: string | null = null;
+    try {
+      const resp = await fetch(`${DUCKDB_URL}/compute`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-agent-key": INSFORGE_API_KEY },
+        body: JSON.stringify({ report_type: r.type, date_from: r.dateFrom, date_to: r.dateTo }),
+      });
+      const data = await resp.json().catch(() => ({} as any));
+      if (resp.ok && data.success) {
+        status = "success"; rowsWritten = data.rows_written ?? 0; durationMs = data.duration_ms ?? 0;
+      } else {
+        error = data.error || `HTTP ${resp.status}`;
+      }
+    } catch (e: any) {
+      error = e.message || String(e);
+    }
+    await client.database.from("compute_logs").insert([{
+      report_type: r.type, date_from: r.dateFrom, date_to: r.dateTo, status,
+      rows_written: rowsWritten, duration_ms: durationMs, error,
+      triggered_by: `collect:${taskId}`,
+      started_at: startedAt.toISOString(), finished_at: new Date().toISOString(),
+    }]);
+    if (status === "failed") {
+      await notifyWecom("⚠️ 报表计算失败", `**报表**: ${r.type}\n**范围**: ${r.dateFrom} ~ ${r.dateTo}\n**错误**: ${error}\n**触发**: collect:${taskId}`);
+    } else {
+      console.log(`[scheduler] /compute ${r.type} ${r.dateFrom}~${r.dateTo}: ${rowsWritten} rows`);
+    }
+  }
 }
 
 /**
@@ -316,6 +364,11 @@ async function executeTask(task: {
         params: { ...params, watermark: newWatermark },
       })
       .eq('id', task.id);
+
+    // C1: 采集成功后自动算报表（service 身份，失败不阻塞采集）
+    if (!lastResult.error && dates && dates.length === 2) {
+      await triggerCompute(client, dates, task.id);
+    }
 
     const finalStatus = lastResult.error ? 'partial' : 'success';
     await writeLog(
