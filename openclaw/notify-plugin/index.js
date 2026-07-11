@@ -92,6 +92,13 @@ async function sendNotify(args, senderId) {
         "通知服务密钥未配置（openclaw 容器缺 AGENT_API_KEY env），请联系管理员。",
     };
   }
+  // C4: cron turn（senderId 空）禁 send_notify——@sender 解析不了 + 默认推 NOTIFY_DEFAULT_TUSERS 会与 push_report 重复推送。强制定时场景用 push_report（收件人从绑定取）。
+  if (!senderId) {
+    return {
+      error:
+        "cron turn 无 requesterSenderId，禁用 send_notify（@sender 解析不了、默认推会与 push_report 重复）。定时推送请用 push_report（收件人自动从绑定取）。",
+    };
+  }
 
   // "@sender" → 当前可信 userid（核心注入，非 LLM 传）
   let to = args.touser;
