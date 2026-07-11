@@ -9,6 +9,7 @@ const ENDPOINT_RETAIL_COUNT = "/earth-gateway/amazon-retail/nhsoft.retail.busine
 
 const REQUEST_TIMEOUT = 30000;
 const DUCKDB_URL = process.env.DUCKDB_URL || 'http://duckdb:9000';
+const AGENT_API_KEY = process.env.AGENT_API_KEY || ''; // duckdb-service /transform /merge 鉴权
 const LEMENG_SECRET_KEY = process.env.LEMENG_SECRET_KEY || '';
 
 // 从 token 解出 company_id（品牌），用于按品牌分区存储。
@@ -307,7 +308,7 @@ export async function collectOnce(
 
       const duckRes = await fetch(`${DUCKDB_URL}${endpoint}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-agent-key': AGENT_API_KEY },
         body: JSON.stringify({
           records: flatRecords,
           config: {

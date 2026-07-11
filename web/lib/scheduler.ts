@@ -13,6 +13,7 @@ import { runServiceDownBucket, runCollectTokenBucket, runHourlyBucket, runDailyB
 const INSFORGE_API_BASE = process.env.INSFORGE_API_BASE!;
 const INSFORGE_API_KEY = process.env.INSFORGE_API_KEY!;
 const DUCKDB_URL = process.env.DUCKDB_URL || "http://duckdb:9000";
+const AGENT_API_KEY = process.env.AGENT_API_KEY!; // duckdb-service 鉴权（/compute /carry-dims 校验此 key，非 INSFORGE_API_KEY）
 
 // 调度器状态：用 globalThis 持有，跨 chunk 单例。
 // Next.js 把 instrumentation.ts 与 route handler 打包进不同 chunk，各自有独立模块作用域，
@@ -143,7 +144,7 @@ async function triggerCompute(client: any, dates: string[], taskId: string) {
     try {
       const resp = await fetch(`${DUCKDB_URL}/compute`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "x-agent-key": INSFORGE_API_KEY },
+        headers: { "Content-Type": "application/json", "x-agent-key": AGENT_API_KEY },
         body: JSON.stringify({ report_type: r.type, date_from: r.dateFrom, date_to: r.dateTo }),
       });
       const data = await resp.json().catch(() => ({} as any));
@@ -493,7 +494,7 @@ function registerCarryDimsJob() {
     try {
       console.log("[scheduler] ⏰ 维表 carry 定时兜底触发");
       const resp = await fetch(`${DUCKDB_URL}/carry-dims`, {
-        method: "POST", headers: { "x-agent-key": INSFORGE_API_KEY },
+        method: "POST", headers: { "x-agent-key": AGENT_API_KEY },
       });
       const data = await resp.json().catch(() => ({}));
       console.log("[scheduler] carry-dims 结果:", resp.status, data);

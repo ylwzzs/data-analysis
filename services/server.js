@@ -158,6 +158,8 @@ app.post("/query", async (req, res) => {
 
 // ===== 通用数据转换端点 =====
 app.post("/transform", async (req, res) => {
+  const reqKey = req.headers["x-agent-key"] || (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+  if (!AGENT_API_KEY || reqKey !== AGENT_API_KEY) return res.status(401).json({ error: "Unauthorized" });
   const startTime = Date.now();
   try {
     const { records, config } = req.body;
@@ -297,6 +299,8 @@ app.post("/transform", async (req, res) => {
 // 与 /transform 的区别：/transform 覆盖写（每小时全量核对用）；/merge 读旧+并新+去重写回（增量续采用）。
 // 无已有文件时退化为 /transform 行为（仅写新记录）。
 app.post("/merge", async (req, res) => {
+  const reqKey = req.headers["x-agent-key"] || (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+  if (!AGENT_API_KEY || reqKey !== AGENT_API_KEY) return res.status(401).json({ error: "Unauthorized" });
   const startTime = Date.now();
   try {
     const { records, config } = req.body;
@@ -483,6 +487,8 @@ app.get("/schema", async (req, res) => {
 // 新增报表：只需 INSERT report_definitions，无需修改代码
 
 app.post("/compute", async (req, res) => {
+  const reqKey = req.headers["x-agent-key"] || (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+  if (!AGENT_API_KEY || reqKey !== AGENT_API_KEY) return res.status(401).json({ error: "Unauthorized" });
   const startTime = Date.now();
   try {
     const { report_type, date_from, date_to } = req.body;
