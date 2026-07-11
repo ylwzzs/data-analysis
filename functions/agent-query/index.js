@@ -219,8 +219,26 @@ module.exports = async function (req) {
   } catch {
     return json({ error: "invalid_json" }, 400);
   }
-  const { sql, userId } = body;
+  let userId = body.userId;
+  const sql = body.sql;
   const key = body.agent_api_key || req.headers.get("x-agent-key");
+
+  // C4: cron turn 无 userId（requesterSenderId 空）→ 从 cronSessionKey 反查 scheduled_reports.run_as
+  // cron turn ctx.sessionKey = agent:<agentId>:cron:<jobid>:run:<runId>（openclaw 源码确认）
+  if (!userId && body.cronSessionKey) {
+    const m = body.cronSessionKey.match(/cron:([^:]+)/i);
+    if (m) {
+      try {
+        const rr = await fetch(POSTGREST_URL + "/rpc/get_scheduled_run_as", {
+          method: "POST",
+          headers: { Authorization: "Bearer " + (await serviceJwt()), "Content-Type": "application/json" },
+          body: JSON.stringify({ p_cron_job_id: m[1] }),
+        });
+        const runAs = await rr.json();
+        if (typeof runAs === "string" && runAs) userId = runAs;
+      } catch (e) { /* 反查失败，userId 仍空，下面报 missing */ }
+    }
+  }
 
   // ① 认证
   if (!AGENT_API_KEY || key !== AGENT_API_KEY) return json({ error: "unauthorized" }, 401);

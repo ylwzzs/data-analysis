@@ -60,7 +60,7 @@ async function fetchDictionary(userId) {
   return body.dictionary;
 }
 
-async function executeQuery({ sql }, userId) {
+async function executeQuery({ sql }, userId, cronSessionKey) {
   const agentApiKey = process.env.AGENT_API_KEY;
 
   if (!agentApiKey) {
@@ -68,9 +68,9 @@ async function executeQuery({ sql }, userId) {
       error: "网关密钥未配置（openclaw 容器缺 AGENT_API_KEY env），请联系管理员。",
     };
   }
-  if (!userId) {
+  if (!userId && !cronSessionKey) {
     return {
-      error: "无法识别请求者身份（requesterSenderId 缺失），出于权限安全不予查询。",
+      error: "无法识别请求者身份（requesterSenderId 和 cronSessionKey 都缺失），出于权限安全不予查询。",
     };
   }
 
@@ -79,7 +79,7 @@ async function executeQuery({ sql }, userId) {
     resp = await fetch(GATEWAY_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sql, userId, agent_api_key: agentApiKey }),
+      body: JSON.stringify(cronSessionKey ? { sql, cronSessionKey, agent_api_key: agentApiKey } : { sql, userId, agent_api_key: agentApiKey }),
     });
   } catch (e) {
     return { error: "查询网关不可达：" + ((e && e.message) || String(e)) };
@@ -187,7 +187,8 @@ export default definePluginEntry({
                   (userId || "<empty>"),
               );
             }
-            return executeQuery({ sql }, userId);
+            const cronSessionKey = ctx && ctx.sessionKey; // C4: cron turn 透传（userId 空时 agent-query 反查 run_as）
+            return executeQuery({ sql }, userId, userId ? null : cronSessionKey);
           },
         };
       },
