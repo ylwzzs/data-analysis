@@ -27,12 +27,14 @@ metadata:
 
 **4. 一问一查**：能一条 SQL 搞定别拆多条。总额/计数/排名/占比用 SUM/COUNT 聚合，别把明细拉回来自己算。
 
-## 选明细还是汇总
+## 选明细还是汇总（汇总优先）
 
-- 问**今天/最近**→优先明细 `retail_detail`（实时，当天有）；汇总表可能滞后约 1 天。
-- 问**历史**日的总额/排名/占比/趋势→用汇总表（类型干净、快）。
-- 要单笔订单、具体商品行、汇总表没有的维度→用 `retail_detail`。
-- 维表（dim_item/dim_branch/dim_region）**可直接查询**做 lookup（如"有哪些门店/战区"）；但**暂不能 JOIN 进 retail_detail 聚合**（跨引擎）——需按战区/品类聚合时，先查明细按 branch_num 聚合，或等标准报表。
+**优先命中汇总表**：问历史日的总额/排名/占比/趋势 → 用 `report_daily_sales_v` / `report_daily_category_v` / `report_weekly_trend`（类型干净、快、成本列自动脱敏）。只有下列情况才扫 `retail_detail` 明细：
+- 问**今天/最近**（汇总表可能滞后约 1 天）。
+- 要**单笔订单、具体商品行**等明细。
+- 汇总表没有的维度。
+
+维表（dim_item/dim_branch/dim_region）可直接查做 lookup（如"有哪些门店/战区"）。按战区/品类聚合历史 → 用汇总表 JOIN 维表；明细级 × 维度归类待 carry（C3）。
 
 ## 呈现
 
