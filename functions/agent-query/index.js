@@ -282,6 +282,18 @@ module.exports = async function (req) {
       return json({ success: true, delivery_to: to });
     } catch (e) { return json({ error: "lookup_failed", detail: String(e) }, 502); }
   }
+  if (body.mode === "delete_scheduled") {
+    if (!userId) return json({ error: "missing userId (owner) for delete_scheduled" }, 400);
+    try {
+      const r = await fetch(POSTGREST_URL + "/rpc/delete_scheduled_report", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + (await serviceJwt()), "Content-Type": "application/json" },
+        body: JSON.stringify({ p_owner: userId, p_cron_job_id: body.cron_job_id }),
+      });
+      const result = await r.json();
+      return json({ success: true, result });
+    } catch (e) { return json({ error: "delete_failed", detail: String(e) }, 502); }
+  }
 
   if (!sql || !userId) return json({ error: "missing sql/userId" }, 400);
 

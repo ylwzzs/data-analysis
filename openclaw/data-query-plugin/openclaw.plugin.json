@@ -16,7 +16,8 @@
       "query_retail_data",
       "list_datasets",
       "create_scheduled_report",
-      "push_report"
+      "push_report",
+      "delete_scheduled_report"
     ]
   },
   "skills": [

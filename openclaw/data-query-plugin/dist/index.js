@@ -307,5 +307,26 @@ export default definePluginEntry({
       },
       { name: PUSH_NAME },
     );
+
+    // C4 delete_scheduled_report：删自己的定时应用（绑定 + cron job，防孤儿）
+    api.registerTool(
+      (ctx) => {
+        const owner = ctx && ctx.requesterSenderId;
+        return {
+          name: "delete_scheduled_report",
+          description: "删除自己的定时推送应用（删绑定 + OpenClaw cron job）。传建时返回的 cron_job_id。只能删自己的。",
+          parameters: { type: "object", properties: { cron_job_id: { type: "string" } }, required: ["cron_job_id"], additionalProperties: false },
+          execute: async (_id, params) => {
+            const obj = typeof params === "string" ? JSON.parse(params) : (params || {});
+            if (!owner) return { error: "无法识别身份" };
+            const del = await gatewayPost({ mode: "delete_scheduled", userId: owner, cron_job_id: obj.cron_job_id });
+            if (del.result !== "deleted") return { error: "删除失败（不存在或非本人）", detail: del };
+            try { await callGatewayTool("cron.remove", {}, { id: obj.cron_job_id }); } catch (e) { /* cron 删失败不阻塞：绑定已删，cron 触发反查失败不推送 */ }
+            return { success: true, message: "已删除定时应用（绑定+cron job）" };
+          },
+        };
+      },
+      { name: "delete_scheduled_report" },
+    );
   },
 });

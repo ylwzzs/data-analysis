@@ -46,6 +46,8 @@ metadata:
 
 cron 触发时（自动 agent turn）：按 query_intent/template 用 `query_retail_data` 查（自动按你的权限裁剪）→ 调 `push_report` 推送（content=结果，收件人自动从绑定取）。**不要**手动用 cron 工具建。
 
+**删除定时**：用户说"取消/删除某定时"→ 调 `delete_scheduled_report`(cron_job_id，建时返回的 id)。
+
 ## 呈现
 
 中文回答，关键数字带单位 + 日期。**直接给结果**，不要"查询成功/我来查一下"等铺垫。truncated 时改用聚合/加 LIMIT 重查，或说明"共 N 条，此处列前 50"。
