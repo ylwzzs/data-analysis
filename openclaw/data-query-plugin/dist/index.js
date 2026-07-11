@@ -9,6 +9,7 @@
 //
 // 依赖：仅 openclaw 运行时（definePluginEntry 由 loader 解析）。无 typebox 等 npm 依赖。
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
+import { callGatewayTool } from "openclaw/plugin-sdk/agent-harness-runtime";
 
 const GATEWAY_URL =
   process.env.AGENT_QUERY_URL || "http://insforge:7130/functions/agent-query";
@@ -67,13 +68,13 @@ const CREATE_SR_NAME = "create_scheduled_report";
 const CREATE_SR_PARAMS = {
   type: "object",
   properties: {
-    cron_job_id: { type: "string", description: "先用 cron 工具 action=add 建 cron job 拿到的 job id" },
     name: { type: "string" },
+    schedule: { type: "object", description: "cron 调度：每天9点={kind:'cron',expr:'0 9 * * *',tz:'Asia/Shanghai'}；每小时={kind:'every',everyMs:3600000}；一次性={kind:'at',at:'<ISO 8601>'}" },
     sr_mode: { type: "string", enum: ["template", "sql"], description: "template=标准报表模板; sql=自然语言查询" },
     template_key: { type: "string" },
     query_intent: { type: "string" },
   },
-  required: ["cron_job_id", "name", "sr_mode"],
+  required: ["name", "schedule", "sr_mode"],
   additionalProperties: false,
 };
 const PUSH_NAME = "push_report";
@@ -254,18 +255,31 @@ export default definePluginEntry({
       { name: LIST_TOOL_NAME },
     );
 
-    // C4 create_scheduled_report：写绑定（agent 先用 cron 工具 add 建 cron 拿 job_id，再调本工具）。run_as=owner 钉死。
+    // C4 create_scheduled_report：一步建 cron（callGatewayTool）+ 写绑定。避免 agent 协调多 tool 漏调（实测踩过：LLM 只建 cron 漏 create_scheduled_report）。
     api.registerTool(
       (ctx) => {
         const owner = ctx && ctx.requesterSenderId;
         return {
           name: CREATE_SR_NAME,
-          description: "建定时应用绑定（cron_job_id→run_as=你）。先用 cron 工具 action=add 建 cron job 拿到 job id，再调本工具。run_as/delivery_to 钉死=你本人，cron 触发时按你的权限查+推给你。",
+          description: "建定时推送应用（一步：内部建 cron + 写绑定）。传 name/schedule/sr_mode(template|sql)/template_key 或 query_intent。run_as/delivery_to 钉死=你本人。cron 触发时 agent 按 query_intent/template 用 query_retail_data 查（自动按你的权限）+ push_report 推给你。不要手动用 cron 工具建。",
           parameters: CREATE_SR_PARAMS,
-          execute: (_id, params) => {
+          execute: async (_id, params) => {
             const obj = typeof params === "string" ? JSON.parse(params) : (params || {});
             if (!owner) return { error: "无法识别创建者（非会话上下文）" };
-            return gatewayPost({ mode: "upsert_scheduled", userId: owner, cron_job_id: obj.cron_job_id, name: obj.name, sr_mode: obj.sr_mode, template_key: obj.template_key, query_intent: obj.query_intent });
+            const message = obj.sr_mode === "template"
+              ? `执行报表模板 ${obj.template_key}：用 query_retail_data 查数据，再用 push_report 推送结果`
+              : `查询：${obj.query_intent}。用 query_retail_data 查数据，再用 push_report 推送结果`;
+            let job;
+            try {
+              job = await callGatewayTool("cron.add", {}, {
+                name: obj.name, schedule: obj.schedule, sessionTarget: "isolated",
+                payload: { kind: "agentTurn", message }, delivery: { mode: "none" },
+              });
+            } catch (e) { return { error: "cron 创建异常", detail: String(e) }; }
+            const cronJobId = job && (job.id || job.job_id || (job.job && job.job.id));
+            if (!cronJobId) return { error: "cron 创建失败（无 job id）", detail: JSON.stringify(job).slice(0, 300) };
+            const upsert = await gatewayPost({ mode: "upsert_scheduled", userId: owner, cron_job_id: cronJobId, name: obj.name, sr_mode: obj.sr_mode, template_key: obj.template_key, query_intent: obj.query_intent });
+            return { success: true, cron_job_id: cronJobId, scheduled_report_id: upsert && upsert.id, message: `已建定时应用「${obj.name}」，按你的权限查并推送给你` };
           },
         };
       },

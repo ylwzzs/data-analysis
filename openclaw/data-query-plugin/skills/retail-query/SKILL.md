@@ -38,11 +38,13 @@ metadata:
 
 ## 定时推送应用（用户说"每天X点推Y"时）
 
-两步（agent 协调）：
-1. 调 **cron 工具**（action=add）：建 cron job（schedule=用户时间，如每天9点 `{kind:'cron',expr:'0 9 * * *',tz:'Asia/Shanghai'}`；sessionTarget=isolated；payload.kind=agentTurn；payload.message="查询 Y 并用 push_report 推送"）。拿到 job id。
-2. 调 **create_scheduled_report**（cron_job_id=上一步 id, name, sr_mode=template/sql, template_key 或 query_intent）。run_as/delivery_to 自动=你本人（钉死）。
+调 **create_scheduled_report** 一步完成（工具内部建 cron + 写绑定）：
+- name：应用名
+- schedule：用户说的时间（每天9点=`{kind:'cron',expr:'0 9 * * *',tz:'Asia/Shanghai'}`；每小时=`{kind:'every',everyMs:3600000}`）
+- sr_mode：标准报表（业绩/周报/品类排行）→ template + template_key；个性化 → sql + query_intent
+- run_as/delivery_to 自动=你本人（钉死，不可改）
 
-cron 触发时（自动 agent turn）：按 query_intent/template 用 `query_retail_data` 查（自动按你的权限裁剪）→ 调 `push_report`（content=结果，收件人自动从绑定取，无需也不能手填）。
+cron 触发时（自动 agent turn）：按 query_intent/template 用 `query_retail_data` 查（自动按你的权限裁剪）→ 调 `push_report` 推送（content=结果，收件人自动从绑定取）。**不要**手动用 cron 工具建。
 
 ## 呈现
 
