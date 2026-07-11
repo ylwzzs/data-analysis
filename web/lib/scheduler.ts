@@ -14,6 +14,7 @@ const INSFORGE_API_BASE = process.env.INSFORGE_API_BASE!;
 const INSFORGE_API_KEY = process.env.INSFORGE_API_KEY!;
 const DUCKDB_URL = process.env.DUCKDB_URL || "http://duckdb:9000";
 const AGENT_API_KEY = process.env.AGENT_API_KEY!; // duckdb-service 鉴权（/compute /carry-dims 校验此 key，非 INSFORGE_API_KEY）
+const POSTGREST_URL = process.env.POSTGREST_URL || "http://postgrest:3000"; // PostgREST 直连（gateway 不代理 /rpc，固化 RPC 直连）
 
 // 调度器状态：用 globalThis 持有，跨 chunk 单例。
 // Next.js 把 instrumentation.ts 与 route handler 打包进不同 chunk，各自有独立模块作用域，
@@ -520,14 +521,14 @@ function registerTargetCloseJob() {
     runningTasks.add(JOB_KEY);
     try {
       console.log("[scheduler] ⏰ 目标固化定时触发（end_date<today 的 active 目标）");
-      const dueRes = await fetch(`${INSFORGE_API_BASE}/rpc/get_due_targets`, {
+      const dueRes = await fetch(`${POSTGREST_URL}/rpc/get_due_targets`, {
         method: "POST",
         headers: { apikey: INSFORGE_API_KEY, Authorization: `Bearer ${INSFORGE_API_KEY}`, "Content-Type": "application/json" },
         body: JSON.stringify({}),
       });
       const due: { id: number }[] = await dueRes.json().catch(() => []);
       for (const t of due) {
-        const cr = await fetch(`${INSFORGE_API_BASE}/rpc/close_target`, {
+        const cr = await fetch(`${POSTGREST_URL}/rpc/close_target`, {
           method: "POST",
           headers: { apikey: INSFORGE_API_KEY, Authorization: `Bearer ${INSFORGE_API_KEY}`, "Content-Type": "application/json" },
           body: JSON.stringify({ p_target_id: t.id }),

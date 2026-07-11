@@ -1,9 +1,10 @@
 // web/app/api/admin/targets/import/route.ts
 // D 目标 CSV 批量导入（逐行调 upsert_target_admin RPC，校验在 RPC 内）
+// ⚠️ 直连 PostgREST（gateway 不代理 /rpc）
 // 模板列: name,system_book_code,branch_num,start_date,end_date,target_sale[,target_purchase]
 import { NextRequest, NextResponse } from 'next/server';
 
-const INSFORGE_API_BASE = process.env.INSFORGE_API_BASE!;
+const POSTGREST_URL = process.env.POSTGREST_URL || "http://postgrest:3000";
 const INSFORGE_API_KEY = process.env.INSFORGE_API_KEY!;
 const headers = { apikey: INSFORGE_API_KEY, Authorization: `Bearer ${INSFORGE_API_KEY}`, 'Content-Type': 'application/json' };
 
@@ -26,7 +27,7 @@ export async function POST(req: NextRequest) {
       const m = h.match(/^target_(.+)$/);
       if (m && row[h]) metrics.push({ metric_code: m[1], target_value: Number(row[h]) });
     }
-    const r = await fetch(`${INSFORGE_API_BASE}/rpc/upsert_target_admin`, {
+    const r = await fetch(`${POSTGREST_URL}/rpc/upsert_target_admin`, {
       method: 'POST', headers,
       body: JSON.stringify({
         p_name: row.name, p_sbc: row.system_book_code, p_branch: row.branch_num,
