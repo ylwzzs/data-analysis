@@ -13,7 +13,7 @@ SELECT biz_date, branch_num, branch_name, total_orders, total_items, total_sale,
 FROM report_daily_sales;
 
 CREATE VIEW report_daily_category_v AS
-SELECT biz_date, branch_num, branch_name, category, total_orders, total_items, total_sale,
+SELECT biz_date, branch_num, category, total_items, total_sale,
        CASE WHEN COALESCE(current_setting('request.jwt.claims.can_see_cost', true)::boolean, false)
             THEN total_profit ELSE NULL END AS total_profit
 FROM report_daily_category;
