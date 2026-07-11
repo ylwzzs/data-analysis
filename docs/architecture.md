@@ -458,6 +458,26 @@ DuckDB /query〔改造：每请求独立连接 + AGENT_API_KEY〕
 
 **不影响**：可信 userid 注入（`requesterSenderId`）+ §4.2 网关 RLS 是独立机制，dmScope 只管 agent 上下文分组、不改鉴权——每用户仍被网关按自己权限过滤/拒绝。可选加固：policy `ingress.session.requireDmScope=per-channel-peer` 防回退（`policy.md`）。
 
+### 4.4 子系统 C：报表自动触发 + 问数权限闭环 + 定时应用 + carry（2026-07-11 设计）
+
+spec：`docs/superpowers/specs/2026-07-11-report-trigger-timed-apps-design.md`。承接 A（主数据）、B（数据注册中心）。四块 + 双身份模型：
+
+**user/service 双身份模型**：面向人的数据出口**永远带用户 perms**（OpenClaw 透传 requesterSenderId / 定时应用绑定的 run_as）；服务身份（serviceJwt，sub=agent-query，无 perms claim）只**算+写**（/compute 写 report_*、carry-dims 导出维表、读字典、写审计），**绝不直接当给人看敏感数据的出口**——只产出全量聚合/维表，再被权限裁剪。
+
+**C0 列级闭环（补 §4.2 的 ⏳）**：report_* 原只有行级 RLS、列级成本裸奔（total_profit 对 can_see_cost=false 可见）。补安全视图 `report_*_v`（成本列按 `current_setting('request.jwt.claims.can_see_cost')` CASE 脱敏），原表收回 anon/authenticated SELECT，agent-query PG 路径改查 `_v` + B 的 costColumns 应用层兜底。明细侧维持 view builder CASE（现状）。
+
+**C1 采集后自动 /compute（补上文「/compute 定时聚合待做」）**：scheduler retail 分支 `verified=success/partial` 后按 `params.dates` 调 duckdb-service /compute（daily_sales/category 用采集范围；weekly_trend 滚动 8 周 upsert 幂等）。**service 身份**，算全量写 report_*、查询时裁剪——无身份矛盾。失败不阻塞采集（parquet 已落），记 compute_logs + 接 collect_fail 告警。
+
+**C2 取数路由（纯引导）**：SKILL.md 加优先级规则（能命中 report_* 汇总就别扫 retail_detail 明细），复用 B 的 list_datasets。不做网关自动重写（YAGNI）。
+
+**C3 carry 维表（物化 parquet）**：维表 dim_*(+ext) → duckdb-service `/carry-dims`（**pgPool 读 → DuckDB COPY parquet S3，全程不 attach、DuckDB 不连 PG**）→ 查询侧 read_parquet 维表 parquet，明细按需 JOIN 维表。**定时（scheduler cron 兜底）+ 变更回调（采集维表后 / ext 编辑后）双触发**，对齐通讯录同步（§4.3 registerContactSyncJob）模式。维表 `carry_enabled` 翻 true。否决 attach（绕过 report_* 风险）与 pg_duckdb（见下）。
+
+**C4 定时应用（OpenClaw cron + run_as + 模板/SQL 分层）**：OpenClaw cron turn **天生不带身份**（requesterSenderId 只来自 inbound，源码证实；现存「建水3店业绩」cron 已踩坑禁用）。解法在我们可控层：
+- **run_as 反查**：`scheduled_reports(cron_job_id → run_as=创建者)` 绑定，后端可信会话写入。plugin 的 query_retail_data 在 requesterSenderId 空时透传 `cronSessionKey=ctx.sessionKey`（cron turn 的 sessionKey 含 `cron:<jobid>:`），agent-query parse job_id 反查 run_as → get_user_perms → 裁剪+脱敏。run_as **不在 LLM 参数**（query_retail_data.parameters 只有 sql）、钉死=创建者、scheduled_reports RLS + CHECK——三道闸封死提权。
+- **模板优先/SQL 兜底**：mode=template（系统内置模板参数化 SQL 读 report_*_v，按 run_as 自动 RLS+_v 裁剪，LLM 不碰数字）/ mode=sql（LLM 写 SQL 兜底，受"绝不编造"约束）。`push_report` 强制用表里 delivery_to（堵 LLM 篡改推送目标）。
+
+**评估否决 pg_duckdb（PG 连 DuckDB 统一引擎）**：本地容器实测——谓词下推✅（read_parquet 视图 + WHERE，scan 只读匹配行），但 read_parquet 走 DuckDB 引擎**读不到 PG GUC**（视图里 `current_setting('request.jwt.claims.*')` 报 `unrecognized configuration parameter`；纯 current_setting 查询能行只是 pg_duckdb 转发回 PG，一旦和 read_parquet 混合就读不到），列级/行级安全还是要 agent-query 应用层拼 claim（同现状），没简化权限；且生产 PG15 无现成 pg_duckdb 镜像、要动核心库。否决，carry 走物化。
+
 ---
 
 ## 五、数据采集系统
