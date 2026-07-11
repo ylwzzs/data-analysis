@@ -85,6 +85,13 @@ export async function POST(req: NextRequest) {
       { total: result.total }
     );
 
+    // C3: 商品档案采集后回调 carry-dims（fire-and-forget，dim_item parquet 刷新）
+    if (!result.error && result.verified) {
+      fetch(`${process.env.DUCKDB_URL || "http://duckdb:9000"}/carry-dims`, {
+        method: "POST", headers: { "x-agent-key": process.env.INSFORGE_API_KEY! },
+      }).catch(() => {});
+    }
+
     return NextResponse.json({
       success: !result.error && result.verified,
       total: result.total,

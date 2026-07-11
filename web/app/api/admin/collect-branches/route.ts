@@ -61,6 +61,13 @@ export async function POST(req: NextRequest) {
     const finalStatus = result.error ? 'failed' : (result.verified ? 'success' : 'partial');
     await writeLog(client, task_id, startedAt, finishedAt, finalStatus, result.collected, result.error || undefined, { total: result.total, dbCount: result.dbCount, verified: result.verified });
 
+    // C3: 门店档案采集后回调 carry-dims（fire-and-forget，dim_branch parquet 刷新）
+    if (!result.error && result.verified) {
+      fetch(`${process.env.DUCKDB_URL || "http://duckdb:9000"}/carry-dims`, {
+        method: "POST", headers: { "x-agent-key": process.env.INSFORGE_API_KEY! },
+      }).catch(() => {});
+    }
+
     return NextResponse.json({
       success: !result.error && result.verified,
       total: result.total,
