@@ -48,6 +48,7 @@ export async function ensureSchedulerInitialized(): Promise<boolean> {
 
   // 通讯录全量兜底（平台基础设施，独立于 collect_tasks；先注册，不依赖采集任务查询结果/是否为空）
   registerContactSyncJob();
+  registerCarryDimsJob();
   registerMonitorJobs();
 
   const client = createClient({ baseUrl: INSFORGE_API_BASE, anonKey: INSFORGE_API_KEY });
@@ -481,6 +482,31 @@ function registerContactSyncJob() {
  *   每小时 data_freshness/contact_sync；每日 data_integrity。
  * Phase A 仅前两桶有 evaluator，后两桶空跑（loadRules 空），Phase B 填。
  */
+// C3: 维表 carry 定时兜底（每天 04:33，避开通讯录 03:17；对齐 registerContactSyncJob 模式）
+function registerCarryDimsJob() {
+  const JOB_KEY = "__carry_dims";
+  if (scheduledJobs.has(JOB_KEY)) return;
+  if (!cron.validate("33 4 * * *")) return;
+  const job = cron.schedule("33 4 * * *", async () => {
+    if (runningTasks.has(JOB_KEY)) return;
+    runningTasks.add(JOB_KEY);
+    try {
+      console.log("[scheduler] ⏰ 维表 carry 定时兜底触发");
+      const resp = await fetch(`${DUCKDB_URL}/carry-dims`, {
+        method: "POST", headers: { "x-agent-key": INSFORGE_API_KEY },
+      });
+      const data = await resp.json().catch(() => ({}));
+      console.log("[scheduler] carry-dims 结果:", resp.status, data);
+    } catch (e: any) {
+      console.error("[scheduler] carry-dims 异常:", e.message);
+    } finally {
+      runningTasks.delete(JOB_KEY);
+    }
+  }, { timezone: "Asia/Shanghai" });
+  scheduledJobs.set(JOB_KEY, job);
+  console.log("[scheduler] 注册维表 carry 兜底 (33 4 * * *, Asia/Shanghai)");
+}
+
 function registerMonitorJobs() {
   const specs: Array<[string, string, () => Promise<void>]> = [
     ['__monitor_service', '* * * * *', runServiceDownBucket],
