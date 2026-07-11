@@ -4,7 +4,10 @@
 --       把两品牌同号门店合并累加（实测 branch 68: report 9964.74 = 3120的4272.34 + 64188的5692.40）
 -- 解法：① 三表加 system_book_code 列 + 改 PK；② report_*_v 重建加列（脱敏 CASE 照抄）；
 --       ③ report_definitions 配置改 read_parquet(filename=true)+regexp_extract 路径解析按品牌分组；
---       ④ 历史 report 数据串品牌已不可信 → TRUNCATE 后由 /compute 全历史重算回填（filename 对历史 parquet 同样有效）
+--       ④ 历史 report 数据串品牌已不可信 → 首次迁移时 TRUNCATE，由 /compute 全历史重算回填
+-- ⚠️ 幂等关键：TRUNCATE 必须只在"首次（system_book_code 列不存在）"执行！
+--    migrate.sh 每次部署重跑全部迁移，若每次 TRUNCATE 会清空每次部署前的全部 report 数据（实测踩坑）。
+--    用 DO 块判断列是否存在：首次 TRUNCATE+加列+改PK；重跑（列已存在）整体跳过。
 -- 不建 report_weekly_trend_v（现状无此视图，weekly_trend 无成本列不需要脱敏）
 -- 依赖：009(表)/010(配置)/032+037-039(视图 security_invoker)
 
@@ -12,33 +15,55 @@
 DROP VIEW IF EXISTS report_daily_sales_v;
 DROP VIEW IF EXISTS report_daily_category_v;
 
--- ===== 1. report_daily_sales：加列 + 改 PK + TRUNCATE =====
-ALTER TABLE report_daily_sales DROP CONSTRAINT IF EXISTS report_daily_sales_pkey;
-TRUNCATE TABLE report_daily_sales;
-ALTER TABLE report_daily_sales ADD COLUMN IF NOT EXISTS system_book_code TEXT;
-ALTER TABLE report_daily_sales ALTER COLUMN system_book_code SET NOT NULL;
-ALTER TABLE report_daily_sales ADD CONSTRAINT report_daily_sales_pkey
-    PRIMARY KEY (biz_date, system_book_code, branch_num);
-CREATE INDEX IF NOT EXISTS idx_report_daily_sales_brand_branch
-    ON report_daily_sales(system_book_code, branch_num, biz_date);
+-- ===== 1. report_daily_sales：仅首次（无 system_book_code 列）TRUNCATE+加列+改PK =====
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='report_daily_sales' AND column_name='system_book_code') THEN
+    ALTER TABLE report_daily_sales DROP CONSTRAINT IF EXISTS report_daily_sales_pkey;
+    TRUNCATE TABLE report_daily_sales;
+    ALTER TABLE report_daily_sales ADD COLUMN system_book_code TEXT NOT NULL;
+    ALTER TABLE report_daily_sales ADD CONSTRAINT report_daily_sales_pkey
+        PRIMARY KEY (biz_date, system_book_code, branch_num);
+    CREATE INDEX IF NOT EXISTS idx_report_daily_sales_brand_branch
+        ON report_daily_sales(system_book_code, branch_num, biz_date);
+    RAISE NOTICE '045: report_daily_sales 首次初始化(TRUNCATE+加列+改PK)';
+  ELSE
+    RAISE NOTICE '045: report_daily_sales 已含 system_book_code，跳过(幂等)';
+  END IF;
+END $$;
 
--- ===== 2. report_daily_category：加列 + 改 PK + TRUNCATE =====
-ALTER TABLE report_daily_category DROP CONSTRAINT IF EXISTS report_daily_category_pkey;
-TRUNCATE TABLE report_daily_category;
-ALTER TABLE report_daily_category ADD COLUMN IF NOT EXISTS system_book_code TEXT;
-ALTER TABLE report_daily_category ALTER COLUMN system_book_code SET NOT NULL;
-ALTER TABLE report_daily_category ADD CONSTRAINT report_daily_category_pkey
-    PRIMARY KEY (biz_date, system_book_code, branch_num, category);
+-- ===== 2. report_daily_category：仅首次 TRUNCATE+加列+改PK =====
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='report_daily_category' AND column_name='system_book_code') THEN
+    ALTER TABLE report_daily_category DROP CONSTRAINT IF EXISTS report_daily_category_pkey;
+    TRUNCATE TABLE report_daily_category;
+    ALTER TABLE report_daily_category ADD COLUMN system_book_code TEXT NOT NULL;
+    ALTER TABLE report_daily_category ADD CONSTRAINT report_daily_category_pkey
+        PRIMARY KEY (biz_date, system_book_code, branch_num, category);
+    RAISE NOTICE '045: report_daily_category 首次初始化(TRUNCATE+加列+改PK)';
+  ELSE
+    RAISE NOTICE '045: report_daily_category 已含 system_book_code，跳过(幂等)';
+  END IF;
+END $$;
 
--- ===== 3. report_weekly_trend：加列 + 改 PK + TRUNCATE（无 _v 视图）=====
-ALTER TABLE report_weekly_trend DROP CONSTRAINT IF EXISTS report_weekly_trend_pkey;
-TRUNCATE TABLE report_weekly_trend;
-ALTER TABLE report_weekly_trend ADD COLUMN IF NOT EXISTS system_book_code TEXT;
-ALTER TABLE report_weekly_trend ALTER COLUMN system_book_code SET NOT NULL;
-ALTER TABLE report_weekly_trend ADD CONSTRAINT report_weekly_trend_pkey
-    PRIMARY KEY (week_start, system_book_code, branch_num);
+-- ===== 3. report_weekly_trend：仅首次 TRUNCATE+加列+改PK（无 _v 视图）=====
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='report_weekly_trend' AND column_name='system_book_code') THEN
+    ALTER TABLE report_weekly_trend DROP CONSTRAINT IF EXISTS report_weekly_trend_pkey;
+    TRUNCATE TABLE report_weekly_trend;
+    ALTER TABLE report_weekly_trend ADD COLUMN system_book_code TEXT NOT NULL;
+    ALTER TABLE report_weekly_trend ADD CONSTRAINT report_weekly_trend_pkey
+        PRIMARY KEY (week_start, system_book_code, branch_num);
+    RAISE NOTICE '045: report_weekly_trend 首次初始化(TRUNCATE+加列+改PK)';
+  ELSE
+    RAISE NOTICE '045: report_weekly_trend 已含 system_book_code，跳过(幂等)';
+  END IF;
+END $$;
 
 -- ===== 4. 重建 report_*_v（加 system_book_code，脱敏 CASE 照抄 032，security_invoker=true）=====
+-- 视图重建本身幂等（DROP+CREATE），每次重跑无副作用
 CREATE VIEW report_daily_sales_v AS
 SELECT biz_date, system_book_code, branch_num, branch_name,
        total_orders, total_items, total_sale,
