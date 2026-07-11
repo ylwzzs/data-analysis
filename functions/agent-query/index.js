@@ -32,14 +32,25 @@ async function loadRegistry() {
   let retailGlob = RETAIL_GLOB_FALLBACK;
   let costColumns = COST_COLUMNS_FALLBACK.slice();
   let pgTables = REPORT_TABLES_FALLBACK.slice();
+  let dimCarry = [];
   try {
-    const dsRes = await fetch(POSTGREST_URL + "/datasets?select=name,engine,source,exposed", { headers });
+    const dsRes = await fetch(POSTGREST_URL + "/datasets?select=name,engine,source,kind,carry_enabled,exposed", { headers });
     if (dsRes.ok) {
       const ds = await dsRes.json();
       const retailRow = ds.find((d) => d.name === "retail_detail");
       if (retailRow && retailRow.source) retailGlob = retailRow.source;
       const pg = ds.filter((d) => d.exposed && d.engine === "pg_table").map((d) => d.name);
       if (pg.length) pgTables = pg;
+      // C3: carry 维表（duckdb_view + dim + carry_enabled），取每个维表的敏感列（per-user 脱敏用）
+      const dimRows = ds.filter((d) => d.engine === "duckdb_view" && d.kind === "dim" && d.carry_enabled);
+      for (const d of dimRows) {
+        let sensitiveColumns = [];
+        try {
+          const scRes = await fetch(POSTGREST_URL + "/dataset_columns?select=name&dataset_name=eq." + encodeURIComponent(d.name) + "&is_sensitive=eq.true", { headers });
+          if (scRes.ok) sensitiveColumns = (await scRes.json()).map((c) => c.name);
+        } catch (e2) { /* 维表敏感列读失败空数组，不阻断 */ }
+        dimCarry.push({ name: d.name, glob: d.source, sensitiveColumns });
+      }
     }
     const colRes = await fetch(POSTGREST_URL + "/dataset_columns?select=name&is_sensitive=eq.true", { headers });
     if (colRes.ok) {
@@ -49,7 +60,7 @@ async function loadRegistry() {
   } catch (e) {
     console.error("[agent-query] loadRegistry failed, using fallback:", String(e));
   }
-  REG_CACHE = { retailGlob, costColumns, pgTables };
+  REG_CACHE = { retailGlob, costColumns, pgTables, dimCarry };
   REG_CACHE_TS = now;
   return REG_CACHE;
 }
@@ -124,10 +135,17 @@ async function runDuckdb(userSelect, perms, reg) {
     : "WHERE branch_num IN (" + perms.branch_nums.map(sqlLit).join(", ") + ")";
   const canSee = perms.can_see_cost ? "TRUE" : "FALSE";
   const replaceList = reg.costColumns.map((c) => `CASE WHEN ${canSee} THEN "${c}" ELSE NULL END AS "${c}"`).join(", ");
-  const viewSql =
+  let viewSql =
     "CREATE OR REPLACE TEMP VIEW retail_detail AS " +
     "SELECT * REPLACE (" + replaceList + ") " +
     "FROM read_parquet('" + reg.retailGlob + "') " + branchFilter + ";";
+  // C3: dim_* carry 视图（字典全可见；敏感列如 dim_item.item_cost_price 按 can_see_cost 脱敏，与 retail_detail 同机制）
+  for (const d of (reg.dimCarry || [])) {
+    const sens = d.sensitiveColumns || [];
+    const dimReplace = sens.map((c) => `CASE WHEN ${canSee} THEN "${c}" ELSE NULL END AS "${c}"`).join(", ");
+    const replaceClause = dimReplace ? `SELECT * REPLACE (${dimReplace}) ` : "SELECT * ";
+    viewSql += "\nCREATE OR REPLACE TEMP VIEW " + d.name + " AS " + replaceClause + "FROM read_parquet('" + d.glob + "');";
+  }
   // 一次提交：建视图 + 用户 SELECT（同连接，临时视图隔离，已实测）
   const combined = viewSql + "\n" + userSelect;
   const res = await fetch(DUCKDB_URL + "/query", {
