@@ -51,6 +51,7 @@ export async function ensureSchedulerInitialized(): Promise<boolean> {
   registerContactSyncJob();
   registerCarryDimsJob();
   registerMonitorJobs();
+  registerTargetCloseJob();
 
   const client = createClient({ baseUrl: INSFORGE_API_BASE, anonKey: INSFORGE_API_KEY });
 
@@ -506,6 +507,42 @@ function registerCarryDimsJob() {
   }, { timezone: "Asia/Shanghai" });
   scheduledJobs.set(JOB_KEY, job);
   console.log("[scheduler] 注册维表 carry 兜底 (33 4 * * *, Asia/Shanghai)");
+}
+
+// D: 目标固化定时兜底（每天 05:10，C1 daily compute 之后；end_date<today 的 active 目标自动固化）
+function registerTargetCloseJob() {
+  const JOB_KEY = "__target_close";
+  if (scheduledJobs.has(JOB_KEY)) return;
+  const CRON = "10 5 * * *";
+  if (!cron.validate(CRON)) return;
+  const job = cron.schedule(CRON, async () => {
+    if (runningTasks.has(JOB_KEY)) return;
+    runningTasks.add(JOB_KEY);
+    try {
+      console.log("[scheduler] ⏰ 目标固化定时触发（end_date<today 的 active 目标）");
+      const dueRes = await fetch(`${INSFORGE_API_BASE}/rpc/get_due_targets`, {
+        method: "POST",
+        headers: { apikey: INSFORGE_API_KEY, Authorization: `Bearer ${INSFORGE_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const due: { id: number }[] = await dueRes.json().catch(() => []);
+      for (const t of due) {
+        const cr = await fetch(`${INSFORGE_API_BASE}/rpc/close_target`, {
+          method: "POST",
+          headers: { apikey: INSFORGE_API_KEY, Authorization: `Bearer ${INSFORGE_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ p_target_id: t.id }),
+        });
+        const data = await cr.json().catch(() => ({}));
+        console.log(`[scheduler] close_target(${t.id}):`, (data as any)?.ok, JSON.stringify(data));
+      }
+    } catch (e: any) {
+      console.error("[scheduler] target_close 异常:", e.message);
+    } finally {
+      runningTasks.delete(JOB_KEY);
+    }
+  }, { timezone: "Asia/Shanghai" });
+  scheduledJobs.set(JOB_KEY, job);
+  console.log("[scheduler] 注册目标固化兜底 (10 5 * * *, Asia/Shanghai)");
 }
 
 function registerMonitorJobs() {
