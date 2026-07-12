@@ -81,7 +81,7 @@ CREATE OR REPLACE FUNCTION upsert_target_breakdown(
   p_parent_id BIGINT, p_sbc TEXT, p_rows JSONB, p_by TEXT
 ) RETURNS JSONB
 LANGUAGE plpgsql SECURITY DEFINER AS $$
-DECLARE v_row JSONB; v_branch TEXT; v_m JSONB; v_sub BIGINT; n INT:=0;
+DECLARE v_row JSONB; v_branch TEXT; v_m TEXT; v_sub BIGINT; n INT:=0;
 BEGIN
   FOR v_row IN SELECT * FROM jsonb_array_elements(p_rows) LOOP
     v_branch := v_row->>'branch_num';
