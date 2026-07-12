@@ -4,7 +4,7 @@ import { isWecomClient, isMobileDevice } from "@/lib/device";
 // 管理员白名单（企微用户 ID）
 const ADMIN_USERIDS = new Set([
   "ZhangDuo",      // 张铎
-  "yangwei",       // yangwei
+  "YangWei",       // 杨玮
   // 添加更多管理员...
 ]);
 
