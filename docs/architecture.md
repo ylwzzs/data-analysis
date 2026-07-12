@@ -954,14 +954,16 @@ POST /compute {"report_type":"daily_supplier","date_from":"2026-07-02","date_to"
 | `/reports` | GET | 查询可用报表列表 |
 | `/compute` | POST | 执行报表计算（从配置读取） |
 
-### 10.8 目标与达成子系统（两类目标模型）
+### 10.8 目标与达成子系统（一个目标·双板块）
 
-目标分两类，复用 `targets` 表的 total→breakdown（`parent_target_id`）机制，**分解轴不同**：
+**一个目标同时含两个板块**，复用 `targets` 的 total→breakdown（`parent_target_id`）机制，两类 children 共存（靠 `category` 列与 `branch_num` 列区分）：
 
-| 类型 | `target_type` | 总目标(total) | 分解轴(breakdown) | 指标 |
-|------|---------------|---------------|-------------------|------|
-| 门店目标 | `store` | branch_num='ALL' | **门店**(branch_num) | `sale`(销售) + `delivery`(配送) |
-| 总部目标 | `hq` | branch_num='ALL', category=NULL | **品类**(category) | `outbound_amt`(出库金额) + `outbound_profit`(出库毛利) |
+| 板块 | total 目标值 | 分解(breakdown) | 指标 |
+|------|--------------|-----------------|------|
+| 总部板块（不拆门店） | `outbound_amt`/`outbound_profit` | **品类**(category=水果/标品耗材) | 出库金额、出库毛利 |
+| 门店板块（拆门店） | `sale`/`delivery` | **门店**(branch_num) | 销售、配送 |
+
+一个 total target 的 `target_metric_values` 存 4 个总值（出库金额/毛利=品类分项和，销售/配送=手填总）；品类 children 存 `outbound_*` 按 category，门店 children 存 `sale`/`delivery` 按 branch_num。`target_type` 列为历史字段，不再用于分派（breakdown route 按 rows 内容：有 category→品类 RPC，有 branch_num→门店 RPC）。
 
 **targets 表关键字段**：
 - `target_type TEXT NOT NULL DEFAULT 'store'` — 'hq'/'store'
