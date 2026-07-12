@@ -5,6 +5,7 @@
 import cron, { ScheduledTask } from 'node-cron';
 import { createClient } from '@insforge/sdk';
 import { collectOnce, getYesterdayChina, getTodayChina, CollectResult } from './collect';
+import { collectDeliveryOnce, type DeliveryCollectResult } from './collect-delivery';
 import { collectItems, CollectItemsResult } from './collect-items';
 import { collectBranches } from './collect-branches';
 import { notifyWecom } from './notify';
@@ -272,6 +273,79 @@ async function executeTask(task: {
         result.error || undefined, { total: result.total, dbCount: result.dbCount, verified: result.verified }
       );
       console.log(`[scheduler] 门店档案采集完成: ${result.collected}/${result.total}, DB ${result.dbCount}, 校验 ${result.verified ? '✅' : '❌'}`);
+      return;
+    }
+
+    if (params.task_type === 'delivery') {
+      // ===== 配送调出明细采集（仅 3120，配送中心99；64188 共用此数据）=====
+      console.log(`[scheduler] 配送明细采集: ${task.name}`);
+      const distributionBranch = Number(params.distribution_branch_num) || 99;
+      const branchNumsStr = String(distributionBranch);
+      const limit = params.page_size || 200;
+      const today = getTodayChina();
+      // dtFrom/dtTo 带时分秒（接口要求 "YYYY-MM-DD HH:MM:SS"）
+      const dates = params.date_mode === 'today'
+        ? { from: `${today} 00:00:00`, to: `${today} 23:59:59` }
+        : { from: `${getYesterdayChina()} 00:00:00`, to: `${getYesterdayChina()} 23:59:59` };
+
+      // 模式判定（同 retail：新一天/距上次全量≥55min/无水位线 → full；否则 incremental）
+      const watermark = params.watermark || {};
+      const watermarkLastCount: number = watermark.last_count || 0;
+      const mode: 'full' | 'incremental' =
+        (watermark.date !== today || Date.now() - (watermark.last_full_ts || 0) >= 55 * 60 * 1000 || watermark.last_count == null) ? 'full' : 'incremental';
+      console.log(`[scheduler] 任务 ${task.name}: dtFrom=${dates.from}, mode=${mode}`);
+
+      let lastResult: DeliveryCollectResult = { records: [], apiTotal: 0, storagePath: '', error: '', newApiTotal: 0, skipped: false };
+      let verified = false;
+
+      if (mode === 'incremental') {
+        lastResult = await collectDeliveryOnce(authToken, distributionBranch, branchNumsStr, dates.from, dates.to, limit, { mode: 'incremental', watermarkLastCount });
+        if (lastResult.error.startsWith('Token expired')) {
+          await writeLog(client, task.id, startedAt, new Date(), 'failed', 0, lastResult.error);
+          await notifyWecom('❌ Token 过期', `**任务**: ${task.name}\n**错误**: ${lastResult.error}`);
+          return;
+        }
+        verified = true; // 增量不对账，交给每小时 full
+      } else {
+        for (let attempt = 1; attempt <= MAX_VERIFY_RETRIES; attempt++) {
+          console.log(`[scheduler] === 第 ${attempt} 次采集 ${attempt > 1 ? '(对账重试)' : ''} ===`);
+          lastResult = await collectDeliveryOnce(authToken, distributionBranch, branchNumsStr, dates.from, dates.to, limit, { mode: 'full' });
+          if (lastResult.error.startsWith('Token expired')) {
+            await writeLog(client, task.id, startedAt, new Date(), 'failed', 0, lastResult.error);
+            await notifyWecom('❌ Token 过期', `**任务**: ${task.name}\n**错误**: ${lastResult.error}`);
+            return;
+          }
+          if (lastResult.apiTotal === 0) { await writeLog(client, task.id, startedAt, new Date(), 'success', 0); return; }
+          const missing = lastResult.apiTotal - lastResult.records.length;
+          verified = lastResult.records.length >= lastResult.apiTotal;
+          if (verified) { console.log(`[scheduler] ✅ 对账通过: ${lastResult.records.length}/${lastResult.apiTotal}`); break; }
+          if (attempt < MAX_VERIFY_RETRIES) {
+            console.warn(`[scheduler] ⚠️ 对账失败: 缺 ${missing}，5s 后重试`);
+            await new Promise(r => setTimeout(r, 5000));
+          } else {
+            console.error(`[scheduler] ❌ ${MAX_VERIFY_RETRIES} 次失败: 缺 ${missing}`);
+            await notifyWecom('❌ 配送明细采集不完整', `**任务**: ${task.name}\n**日期**: ${dates.from}\n**采集**: ${lastResult.records.length}/${lastResult.apiTotal}\n**缺**: ${missing}`);
+            lastResult.error += `; 对账失败(重试${MAX_VERIFY_RETRIES}次): 缺 ${missing}`;
+          }
+        }
+      }
+
+      // 更新水位线（同 retail：仅落盘成功才推进）
+      const finishedAt = new Date();
+      const nowMs = finishedAt.getTime();
+      const persistOk = !lastResult.error;
+      const newWatermark = {
+        date: today,
+        last_count: persistOk ? lastResult.newApiTotal : watermarkLastCount,
+        last_full_ts: (mode === 'full' && persistOk) ? nowMs : (watermark.last_full_ts || nowMs),
+      };
+      await client.database.from('collect_tasks').update({ last_run_at: finishedAt.toISOString(), params: { ...params, watermark: newWatermark } }).eq('id', task.id);
+
+      // 不 triggerCompute（先只落明细，汇总后续）
+      const finalStatus = lastResult.error ? 'partial' : 'success';
+      await writeLog(client, task.id, startedAt, finishedAt, finalStatus, lastResult.records.length, lastResult.error || undefined,
+        { mode, skipped: lastResult.skipped, storage_path: lastResult.storagePath, verification: { api_total: lastResult.apiTotal, missing: lastResult.apiTotal - lastResult.records.length, verified } });
+      console.log(`[scheduler] 配送明细 ${task.name}: ${finalStatus} ${mode}${lastResult.skipped ? '(skipped)' : `(${lastResult.records.length} 条)`} ${verified ? '✅' : '❌'}`);
       return;
     }
 
