@@ -38,3 +38,5 @@ deploy/nginx/user_conf.d/server.conf
 
 # OpenClaw 环境变量（包含 API Key）
 openclaw/.env
+.superpowers/
+.gstack/
