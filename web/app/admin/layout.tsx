@@ -43,6 +43,12 @@ export default async function AdminLayout({
                 <SubNavItem href="/admin/sources/monitor">监控面板</SubNavItem>
               </div>
             </div>
+            <div className="pt-2">
+              <NavItem href="/admin/branches" icon="🏠">门店维护</NavItem>
+            </div>
+            <div className="pt-2">
+              <NavItem href="/admin/targets" icon="🎯">目标管理</NavItem>
+            </div>
             <div className="pt-4 border-t">
               <NavItem href="#" icon="👥" disabled>用户管理</NavItem>
               <NavItem href="#" icon="⚙️" disabled>系统设置</NavItem>
