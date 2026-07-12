@@ -115,7 +115,7 @@ export default function CollectMonitorPage() {
                       <td className="px-4 py-3">
                         <span className={`px-2 py-1 rounded text-xs ${
                           log.status === 'success' ? 'bg-green-50 text-green-600' :
-                          log.status === 'running' ? 'bg-blue-50 text-blue-600' :
+                          log.status === 'running' ? 'bg-primary/10 text-primary' :
                           'bg-red-50 text-red-600'
                         }`}>
                           {log.status === 'success' ? '成功' :

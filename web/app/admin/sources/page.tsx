@@ -72,7 +72,7 @@ export default function DataSourcesPage() {
         <h1 className="text-2xl font-bold">数据源管理</h1>
         <button
           onClick={() => setShowModal(true)}
-          className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition"
+          className="px-4 py-2 bg-primary text-white rounded hover:bg-primary transition"
         >
           新建数据源
         </button>
@@ -112,7 +112,7 @@ export default function DataSourcesPage() {
                     <td className="px-4 py-3 space-x-2">
                       <button
                         onClick={() => setEditingSource(source)}
-                        className="text-blue-500 hover:underline text-sm"
+                        className="text-primary hover:underline text-sm"
                       >
                         配置凭证
                       </button>
@@ -182,7 +182,7 @@ export default function DataSourcesPage() {
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+                  className="px-4 py-2 bg-primary text-white rounded hover:bg-primary"
                 >
                   创建
                 </button>

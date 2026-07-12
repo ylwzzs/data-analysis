@@ -108,7 +108,7 @@ export default function CollectTasksPage() {
     if (lastLog.status === 'success') {
       return { text: `成功 ${lastLog.rows_collected}条`, color: 'text-green-600' };
     } else if (lastLog.status === 'running') {
-      return { text: '运行中', color: 'text-blue-600' };
+      return { text: '运行中', color: 'text-primary' };
     } else {
       return { text: '失败', color: 'text-red-600' };
     }
@@ -120,7 +120,7 @@ export default function CollectTasksPage() {
         <h1 className="text-2xl font-bold">采集任务管理</h1>
         <button
           onClick={() => setShowModal(true)}
-          className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition"
+          className="px-4 py-2 bg-primary text-white rounded hover:bg-primary transition"
         >
           新建任务
         </button>
@@ -170,7 +170,7 @@ export default function CollectTasksPage() {
                     <td className="px-4 py-3 space-x-2">
                       <button
                         onClick={() => runNow(task)}
-                        className="text-blue-500 hover:underline text-sm"
+                        className="text-primary hover:underline text-sm"
                         disabled={!task.enabled}
                       >
                         立即执行
@@ -267,7 +267,7 @@ export default function CollectTasksPage() {
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+                  className="px-4 py-2 bg-primary text-white rounded hover:bg-primary"
                 >
                   创建
                 </button>

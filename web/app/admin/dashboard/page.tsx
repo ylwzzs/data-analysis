@@ -73,7 +73,7 @@ export default async function AdminDashboard() {
       <div className="grid grid-cols-3 gap-4">
         <Link
           href="/admin/sources"
-          className="bg-white rounded-lg p-6 shadow-sm hover:shadow-md transition border border-transparent hover:border-blue-200"
+          className="bg-white rounded-lg p-6 shadow-sm hover:shadow-md transition border border-transparent hover:border-primary/40"
         >
           <div className="text-2xl mb-2">📦</div>
           <div className="font-bold">数据源配置</div>
@@ -81,7 +81,7 @@ export default async function AdminDashboard() {
         </Link>
         <Link
           href="/admin/sources/tasks"
-          className="bg-white rounded-lg p-6 shadow-sm hover:shadow-md transition border border-transparent hover:border-blue-200"
+          className="bg-white rounded-lg p-6 shadow-sm hover:shadow-md transition border border-transparent hover:border-primary/40"
         >
           <div className="text-2xl mb-2">⚡</div>
           <div className="font-bold">采集任务</div>
@@ -89,7 +89,7 @@ export default async function AdminDashboard() {
         </Link>
         <Link
           href="/admin/sources/monitor"
-          className="bg-white rounded-lg p-6 shadow-sm hover:shadow-md transition border border-transparent hover:border-blue-200"
+          className="bg-white rounded-lg p-6 shadow-sm hover:shadow-md transition border border-transparent hover:border-primary/40"
         >
           <div className="text-2xl mb-2">📈</div>
           <div className="font-bold">监控面板</div>

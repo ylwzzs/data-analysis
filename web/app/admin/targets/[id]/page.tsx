@@ -43,11 +43,11 @@ export default function BreakdownPage() {
 
   return (
     <div className="p-4">
-      <a href="/admin/targets" className="text-blue-600 text-sm inline-flex items-center gap-1"><ArrowLeft size={14} /> 返回目标列表</a>
+      <a href="/admin/targets" className="text-primary text-sm inline-flex items-center gap-1"><ArrowLeft size={14} /> 返回目标列表</a>
       <h1 className="text-xl font-bold my-2">目标分解</h1>
       <div className="mb-3 flex items-center gap-3">
-        <a href={`/api/admin/targets/template?parent_id=${id}`} className="text-blue-600 text-sm inline-flex items-center gap-1"><Download size={14} /> 下载模板</a>
-        <button onClick={save} className="bg-blue-600 text-white px-3 py-1 text-sm rounded">保存分解</button>
+        <a href={`/api/admin/targets/template?parent_id=${id}`} className="text-primary text-sm inline-flex items-center gap-1"><Download size={14} /> 下载模板</a>
+        <button onClick={save} className="bg-primary text-white px-3 py-1 text-sm rounded">保存分解</button>
         {saved && <span className="text-green-600 text-sm inline-flex items-center gap-1"><CheckCircle size={14} /> 已保存</span>}
       </div>
 
@@ -62,7 +62,7 @@ export default function BreakdownPage() {
         <tbody>
           {sorted.map((r, i) => (
             <tr key={r.branch_num}>
-              {wzSpans[i] > 0 && <td rowSpan={wzSpans[i]} className="border p-2 bg-blue-50 align-top font-medium">{r.war_zone || '-'}</td>}
+              {wzSpans[i] > 0 && <td rowSpan={wzSpans[i]} className="border p-2 bg-primary/10 align-top font-medium">{r.war_zone || '-'}</td>}
               {l2Spans[i] > 0 && <td rowSpan={l2Spans[i]} className="border p-2 align-top text-gray-600">{r.region_l2 || '-'}</td>}
               <td className="border p-2">{r.branch_num}</td>
               <td className="border p-2">{r.branch_name}</td>

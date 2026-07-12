@@ -14,7 +14,7 @@ export default function BranchesPage() {
       <p className="text-sm text-gray-500 mb-3">战区/二级区域由采集自动带入（dim_branch.first_level_region/second_level_region），跨品牌同名合并（东部战区含 3120+64188）。人工只维护「分组/备注(ext)」。</p>
       <div className="flex gap-2 border-b mb-4">
         {([['list', '门店列表'], ['unmapped', '无战区预警']] as const).map(([k, l]) => (
-          <button key={k} onClick={() => setTab(k)} className={`px-4 py-2 text-sm ${tab === k ? 'bg-blue-600 text-white rounded-t' : 'text-gray-600'}`}>{l}</button>
+          <button key={k} onClick={() => setTab(k)} className={`px-4 py-2 text-sm ${tab === k ? 'bg-primary text-white rounded-t' : 'text-gray-600'}`}>{l}</button>
         ))}
         <select value={sbc} onChange={e => setSbc(e.target.value)} className="ml-auto border px-2 text-sm rounded self-end mb-1">
           <option value="3120">3120 鲜果恰恰</option>
@@ -56,7 +56,7 @@ function BranchList({ sbc }: { sbc: string }) {
         <input placeholder="区域(二级)" value={filter.region} onChange={e => setFilter({ ...filter, region: e.target.value })} className="border px-2 py-1 text-sm rounded" />
         <input placeholder="城市" value={filter.city} onChange={e => setFilter({ ...filter, city: e.target.value })} className="border px-2 py-1 text-sm rounded" />
         <input placeholder="搜索 门店号/名称" value={filter.q} onChange={e => setFilter({ ...filter, q: e.target.value })} className="border px-2 py-1 text-sm rounded flex-1 min-w-[160px]" />
-        <button onClick={() => query(1)} className="bg-blue-600 text-white px-3 py-1 text-sm rounded">查询</button>
+        <button onClick={() => query(1)} className="bg-primary text-white px-3 py-1 text-sm rounded">查询</button>
       </div>
       <table className="w-full text-sm border-collapse">
         <thead><tr className="bg-gray-100">{['门店号', '名称', '战区(一级)', '二级区域', '城市', '分组(ext)', '备注(ext)', '操作'].map(h => <th key={h} className="border p-2 text-left">{h}</th>)}</tr></thead>
@@ -70,7 +70,7 @@ function BranchList({ sbc }: { sbc: string }) {
               <td className="border p-2">{r.city}</td>
               <td className="border p-2">{r.custom_group || '-'}</td>
               <td className="border p-2">{r.note || '-'}</td>
-              <td className="border p-2"><button onClick={() => setEdit({ ...r })} className="text-blue-600">编辑ext</button></td>
+              <td className="border p-2"><button onClick={() => setEdit({ ...r })} className="text-primary">编辑ext</button></td>
             </tr>
           ))}
         </tbody>
@@ -87,7 +87,7 @@ function BranchList({ sbc }: { sbc: string }) {
             <h3 className="font-bold mb-2">编辑 ext：{edit.branch_name}</h3>
             <label className="text-sm">自定义分组<input value={edit.custom_group || ''} onChange={e => setEdit({ ...edit, custom_group: e.target.value })} className="border w-full px-2 py-1 mb-2 rounded" /></label>
             <label className="text-sm">备注<input value={edit.note || ''} onChange={e => setEdit({ ...edit, note: e.target.value })} className="border w-full px-2 py-1 mb-3 rounded" /></label>
-            <div className="flex gap-2 justify-end"><button onClick={() => setEdit(null)} className="px-3 py-1 text-sm">取消</button><button onClick={saveExt} className="bg-blue-600 text-white px-3 py-1 text-sm rounded">保存</button></div>
+            <div className="flex gap-2 justify-end"><button onClick={() => setEdit(null)} className="px-3 py-1 text-sm">取消</button><button onClick={saveExt} className="bg-primary text-white px-3 py-1 text-sm rounded">保存</button></div>
           </div>
         </div>
       )}

@@ -25,7 +25,7 @@ export default async function AdminLayout({
         </div>
         <div className="flex items-center gap-4">
           <span className="text-sm text-gray-600">{wecomName}</span>
-          <Link href="/" className="text-sm text-blue-600 hover:underline">
+          <Link href="/" className="text-sm text-primary hover:underline">
             返回前台
           </Link>
         </div>

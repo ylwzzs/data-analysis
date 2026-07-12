@@ -15,7 +15,7 @@ export default function TargetsPage() {
   return (
     <div className="p-4">
       <h1 className="text-xl font-bold mb-3">目标管理</h1>
-      <div className="mb-3"><button onClick={() => setShow(true)} className="bg-blue-600 text-white px-3 py-1 text-sm rounded">新建总目标</button></div>
+      <div className="mb-3"><button onClick={() => setShow(true)} className="bg-primary text-white px-3 py-1 text-sm rounded">新建总目标</button></div>
       <table className="w-full text-sm border-collapse">
         <thead><tr className="bg-gray-100">{['名称', '品牌', '周期', '指标', '目标', '达成', '状态', '操作'].map(h => <th key={h} className="border p-2 text-left">{h}</th>)}</tr></thead>
         <tbody>
@@ -26,7 +26,7 @@ export default function TargetsPage() {
               <td className="border p-2">{t.metric_name}</td><td className="border p-2">{t.target_value}{t.unit}</td>
               <td className="border p-2">{t.achievement_rate != null ? (Number(t.achievement_rate) * 100).toFixed(0) + '%' : '-'}</td>
               <td className="border p-2">{t.status}</td>
-              <td className="border p-2"><a href={`/admin/targets/${t.target_id}`} className="text-blue-600">分解</a></td>
+              <td className="border p-2"><a href={`/admin/targets/${t.target_id}`} className="text-primary">分解</a></td>
             </tr>
           ))}
         </tbody>
@@ -103,14 +103,14 @@ function TotalForm({ onSaved, onClose }: { onSaved: () => void; onClose: () => v
                 <td className="border p-1 text-center"><button onClick={() => delRow(i)} className="text-gray-400 hover:text-red-600 inline-flex items-center justify-center" title="删除该行"><Trash2 size={14} /></button></td>
               </tr>
             ))}
-            <tr><td colSpan={3} className="border p-0"><button onClick={addRow} className="w-full py-2 text-sm text-blue-600 hover:bg-blue-50 inline-flex items-center justify-center gap-1"><Plus size={14} /> 添加指标行</button></td></tr>
+            <tr><td colSpan={3} className="border p-0"><button onClick={addRow} className="w-full py-2 text-sm text-primary hover:bg-primary/10 inline-flex items-center justify-center gap-1"><Plus size={14} /> 添加指标行</button></td></tr>
           </tbody>
         </table>
 
         {err && <div className="text-red-600 text-sm mb-2">{err}</div>}
         <div className="flex justify-end gap-2 pt-2 border-t">
           <button onClick={onClose} className="border border-gray-300 px-4 py-1.5 text-sm rounded hover:bg-gray-50">取消</button>
-          <button onClick={submit} className="bg-blue-600 text-white px-4 py-1.5 text-sm rounded hover:bg-blue-700">保存总目标</button>
+          <button onClick={submit} className="bg-primary text-white px-4 py-1.5 text-sm rounded hover:bg-primary/90">保存总目标</button>
         </div>
       </div>
     </div>
