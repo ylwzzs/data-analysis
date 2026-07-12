@@ -53,7 +53,7 @@ INSERT INTO report_definitions (report_type, name, target_table, source_pattern,
  's3://lemeng-datasource/lemeng/transfer_detail/**/*.parquet',
  $SQL$
  SELECT
-   regexp_extract(filename, 'transfer_detail/([0-9]+)/', 1) AS system_book_code,
+   regexp_extract(d.filename,'transfer_detail/([0-9]+)/', 1) AS system_book_code,
    substr(order_time,1,4)||substr(order_time,6,2)||substr(order_time,9,2) AS biz_date_raw,
    response_branch_num AS branch_num,
    CASE split_part(coalesce(di.category_path,''), '->', 1)
@@ -75,7 +75,7 @@ INSERT INTO report_definitions (report_type, name, target_table, source_pattern,
  's3://lemeng-datasource/lemeng/wholesale_detail/**/*.parquet',
  $SQL$
  SELECT
-   regexp_extract(filename, 'wholesale_detail/([0-9]+)/', 1) AS system_book_code,
+   regexp_extract(d.filename,'wholesale_detail/([0-9]+)/', 1) AS system_book_code,
    substr(audit_time,1,4)||substr(audit_time,6,2)||substr(audit_time,9,2) AS biz_date_raw,
    branch_num,
    CASE split_part(coalesce(di.category_path,''), '->', 1)
