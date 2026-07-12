@@ -2,6 +2,7 @@
 // 目标管理：总目标列表 + 新建总目标(Modal 明细表式 指标=行) + 分解入口
 'use client';
 import { useState, useEffect } from 'react';
+import { X, Plus, Trash2 } from 'lucide-react';
 
 export default function TargetsPage() {
   const [list, setList] = useState<any[]>([]);
@@ -73,7 +74,7 @@ function TotalForm({ onSaved, onClose }: { onSaved: () => void; onClose: () => v
       <div className="bg-white rounded-lg shadow-xl w-[560px] max-w-[92vw] max-h-[92vh] overflow-auto p-5" onClick={e => e.stopPropagation()}>
         <div className="flex justify-between items-center mb-4">
           <h2 className="font-bold text-lg">新建总目标</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
         </div>
 
         <div className="grid grid-cols-3 gap-3 mb-4">
@@ -99,10 +100,10 @@ function TotalForm({ onSaved, onClose }: { onSaved: () => void; onClose: () => v
                   </select>
                 </td>
                 <td className="border p-1"><input type="number" value={r.target_value} onChange={e => setRow(i, { target_value: e.target.value })} placeholder="目标值" className="border rounded w-full px-2 py-1 text-sm text-right" /></td>
-                <td className="border p-1 text-center"><button onClick={() => delRow(i)} className="text-gray-400 hover:text-red-600" title="删除该行">🗑</button></td>
+                <td className="border p-1 text-center"><button onClick={() => delRow(i)} className="text-gray-400 hover:text-red-600 inline-flex items-center justify-center" title="删除该行"><Trash2 size={14} /></button></td>
               </tr>
             ))}
-            <tr><td colSpan={3} className="border p-0"><button onClick={addRow} className="w-full py-2 text-sm text-blue-600 hover:bg-blue-50">＋ 添加指标行</button></td></tr>
+            <tr><td colSpan={3} className="border p-0"><button onClick={addRow} className="w-full py-2 text-sm text-blue-600 hover:bg-blue-50 inline-flex items-center justify-center gap-1"><Plus size={14} /> 添加指标行</button></td></tr>
           </tbody>
         </table>
 

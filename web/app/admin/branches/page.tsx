@@ -3,6 +3,7 @@
 // 战区 = dim_branch.first_level_region（采集来，跨品牌重合：东部/中部/南部/西部战区），不需人工维护
 'use client';
 import { useState, useEffect } from 'react';
+import { AlertTriangle, CheckCircle } from 'lucide-react';
 
 export default function BranchesPage() {
   const [tab, setTab] = useState<'list' | 'unmapped'>('list');
@@ -64,7 +65,7 @@ function BranchList({ sbc }: { sbc: string }) {
             <tr key={`${r.system_book_code}-${r.branch_num}`}>
               <td className="border p-2">{r.branch_num}</td>
               <td className="border p-2">{r.branch_name}</td>
-              <td className="border p-2">{r.war_zone || <span className="text-red-600">⚠ 无战区</span>}</td>
+              <td className="border p-2">{r.war_zone || <span className="text-red-600 inline-flex items-center gap-1"><AlertTriangle size={14} /> 无战区</span>}</td>
               <td className="border p-2">{r.region_l2 || '-'}</td>
               <td className="border p-2">{r.city}</td>
               <td className="border p-2">{r.custom_group || '-'}</td>
@@ -100,7 +101,7 @@ function Unmapped() {
   return (
     <div>
       <p className="text-sm text-gray-600 mb-2">无战区（first_level_region 空）的门店（采集源没带战区，需在乐檬后台补门店区域，或个别特殊店）：</p>
-      {data.length === 0 ? <p className="text-green-600">✅ 全部门店都有战区</p> : (
+      {data.length === 0 ? <p className="text-green-600 inline-flex items-center gap-1"><CheckCircle size={14} /> 全部门店都有战区</p> : (
         <table className="w-full text-sm border-collapse">
           <thead><tr className="bg-gray-100">{['品牌', '门店号', '名称', '区域'].map(h => <th key={h} className="border p-2 text-left">{h}</th>)}</tr></thead>
           <tbody>{data.map((r: any) => <tr key={`${r.system_book_code}-${r.branch_num}`}><td className="border p-2">{r.system_book_code}</td><td className="border p-2">{r.branch_num}</td><td className="border p-2">{r.branch_name}</td><td className="border p-2">{r.region_name || '-'}</td></tr>)}</tbody>

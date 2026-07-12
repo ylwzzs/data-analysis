@@ -2,6 +2,7 @@
 // 分解：批量编辑表（战区/二级区域 合并单元格 + 门店×动态指标列）+ 汇总校验 + 下载/上传
 'use client';
 import { useState, useEffect } from 'react';
+import { ArrowLeft, Download, CheckCircle } from 'lucide-react';
 import { useParams } from 'next/navigation';
 
 export default function BreakdownPage() {
@@ -42,12 +43,12 @@ export default function BreakdownPage() {
 
   return (
     <div className="p-4">
-      <a href="/admin/targets" className="text-blue-600 text-sm">← 返回目标列表</a>
+      <a href="/admin/targets" className="text-blue-600 text-sm inline-flex items-center gap-1"><ArrowLeft size={14} /> 返回目标列表</a>
       <h1 className="text-xl font-bold my-2">目标分解</h1>
       <div className="mb-3 flex items-center gap-3">
-        <a href={`/api/admin/targets/template?parent_id=${id}`} className="text-blue-600 text-sm">⬇ 下载模板</a>
+        <a href={`/api/admin/targets/template?parent_id=${id}`} className="text-blue-600 text-sm inline-flex items-center gap-1"><Download size={14} /> 下载模板</a>
         <button onClick={save} className="bg-blue-600 text-white px-3 py-1 text-sm rounded">保存分解</button>
-        {saved && <span className="text-green-600 text-sm">✅ 已保存</span>}
+        {saved && <span className="text-green-600 text-sm inline-flex items-center gap-1"><CheckCircle size={14} /> 已保存</span>}
       </div>
 
       <table className="text-sm border-collapse">
