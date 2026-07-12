@@ -10,6 +10,8 @@ const REQUEST_TIMEOUT = 30000;
 const DUCKDB_URL = process.env.DUCKDB_URL || 'http://duckdb:9000';
 const AGENT_API_KEY = process.env.AGENT_API_KEY || '';
 const LEMENG_SECRET_KEY = process.env.LEMENG_SECRET_KEY || '';
+const POSTGREST_URL = process.env.POSTGREST_URL || 'http://postgrest:3000';
+const INSFORGE_API_KEY = process.env.INSFORGE_API_KEY || '';
 
 // 从 token 解 company_id（品牌），用于按品牌分区存储。同 collect.ts。
 function decodeCompanyId(authToken: string): string {
@@ -42,11 +44,23 @@ function buildHeaders(authToken: string, branchNumsStr: string, urlPath: string,
   };
 }
 
-// body 构造（实测抓到的真实结构）：驼峰，offset 分页，responseBranchNums 空=全部调入
-function buildBody(distributionBranch: number, dtFrom: string, dtTo: string, offset: number, limit: number): string {
+// 取该品牌全部门店号（dim_branch，含 inactive 求全），配送接口 responseBranchNums 须显式列表（空=返0）
+async function fetchResponseBranchNums(systemBookCode: string): Promise<number[]> {
+  try {
+    const r = await fetch(`${POSTGREST_URL}/dim_branch?system_book_code=eq.${systemBookCode}&select=branch_num`, {
+      headers: { apikey: INSFORGE_API_KEY, Authorization: `Bearer ${INSFORGE_API_KEY}` },
+    });
+    const rows = await r.json();
+    const nums = (rows || []).map((x: any) => Number(x.branch_num)).filter((n: number) => !isNaN(n) && n > 0);
+    return nums.sort((a: number, b: number) => a - b);
+  } catch { return []; }
+}
+
+// body 构造（实测抓到的真实结构）：驼峰，offset 分页，responseBranchNums 须显式全门店列表（空=返0）
+function buildBody(distributionBranch: number, dtFrom: string, dtTo: string, offset: number, limit: number, responseBranchNums: number[]): string {
   return JSON.stringify({
     branchNums: [distributionBranch], dateType: "调出日期", dtFrom, dtTo,
-    distributionBranchNums: [distributionBranch], responseBranchNums: [],   // 空=全部调入门店
+    distributionBranchNums: [distributionBranch], responseBranchNums,
     unitType: "常用单位", itemNums: [], itemLabelNums: [], itemDepartments: [], storehouseNums: [],
     filterPolicyItems: false, filterCreditNote: false, categoryCodes: [], isEnableTax: false, queryTime: false,
     managementStyles: [], taxRates: [], supplierNums: [],
@@ -162,9 +176,14 @@ export async function collectDeliveryOnce(
   const watermarkLastCount = options?.watermarkLastCount ?? 0;
   const result: DeliveryCollectResult = { records: [], apiTotal: 0, storagePath: '', error: '', newApiTotal: 0, skipped: false };
   const companyId = decodeCompanyId(authToken);
+  const responseBranchNums = await fetchResponseBranchNums(companyId);
+  if (responseBranchNums.length === 0) {
+    result.error = `无门店列表(dim_branch ${companyId})，配送接口需 responseBranchNums`;
+    return result;
+  }
 
   // 首页：拿 count + 预热 token
-  const firstBody = buildBody(distributionBranch, dtFrom, dtTo, 0, limit);
+  const firstBody = buildBody(distributionBranch, dtFrom, dtTo, 0, limit, responseBranchNums);
   const firstRes = await callLemengApi(ENDPOINT_DETAIL, authToken, firstBody, branchNumsStr);
   if (!firstRes.ok) { result.error = firstRes.error || 'first page failed'; return result; }
   if (firstRes.data?.code === -1) { result.error = `Token expired: ${firstRes.data?.message}`; return result; }
@@ -189,7 +208,7 @@ export async function collectDeliveryOnce(
   const maxPages = 500;
   let pages = 0;
   while (offset < result.apiTotal && pages < maxPages) {
-    const bodyStr = buildBody(distributionBranch, dtFrom, dtTo, offset, limit);
+    const bodyStr = buildBody(distributionBranch, dtFrom, dtTo, offset, limit, responseBranchNums);
     const pr = await callLemengApi(ENDPOINT_DETAIL, authToken, bodyStr, branchNumsStr);
     if (!pr.ok || pr.data?.code !== 0) {
       console.error(`[collect-delivery] offset ${offset} error: ${pr.error || pr.data?.msg}`);
