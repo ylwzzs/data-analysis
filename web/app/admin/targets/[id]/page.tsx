@@ -1,8 +1,8 @@
 // web/app/admin/targets/[id]/page.tsx
 // 分解：批量编辑表（战区/二级区域 合并单元格 + 门店×动态指标列）+ 汇总校验 + 下载/上传
 'use client';
-import { useState, useEffect } from 'react';
-import { ArrowLeft, Download, CheckCircle } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { ArrowLeft, Download, Upload, CheckCircle } from 'lucide-react';
 import { useParams } from 'next/navigation';
 
 export default function BreakdownPage() {
@@ -11,6 +11,7 @@ export default function BreakdownPage() {
   const [balance, setBalance] = useState<any>({});
   const [metrics, setMetrics] = useState<string[]>([]);
   const [saved, setSaved] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const load = async () => {
     const r = await fetch(`/api/admin/targets/breakdown?parent_id=${id}`); const j = await r.json();
@@ -31,6 +32,26 @@ export default function BreakdownPage() {
   };
   const sumOf = (m: string) => rows.reduce((s, r) => s + (Number(r.metrics?.[m]) || 0), 0);
 
+  // 导入 Excel：解析返行后按 branch_num 合并填 metrics（保留门店基础信息）
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]; if (!f) return;
+    const fd = new FormData(); fd.append('file', f);
+    try {
+      const r = await fetch('/api/admin/targets/template', { method: 'POST', body: fd });
+      const j = await r.json();
+      if (j.rows) {
+        const byBn = Object.fromEntries(j.rows.map((x: any) => [x.branch_num, x.metrics]));
+        setRows(rs => rs.map(rw => byBn[rw.branch_num] ? { ...rw, metrics: { ...rw.metrics, ...byBn[rw.branch_num] } } : rw));
+        alert(`已导入 ${j.count} 条，请核对后点「保存分解」`);
+      } else {
+        alert('解析失败：' + (j.error || JSON.stringify(j)));
+      }
+    } catch (err) {
+      alert('解析失败：' + String(err));
+    }
+    e.target.value = ''; // 清空 input 允许重选同文件
+  };
+
   // 按 战区 + 二级区域 排序，算合并 rowSpan
   const sorted = [...rows].sort((a, b) => (a.war_zone || '').localeCompare(b.war_zone || '') || (a.region_l2 || '').localeCompare(b.region_l2 || ''));
   const spanOf = (keyFn: (r: any) => string) => {
@@ -45,13 +66,19 @@ export default function BreakdownPage() {
     <div className="p-4">
       <a href="/admin/targets" className="text-primary text-sm inline-flex items-center gap-1"><ArrowLeft size={14} /> 返回目标列表</a>
       <h1 className="text-xl font-bold my-2">目标分解</h1>
-      <div className="mb-3 flex items-center gap-3">
-        <a href={`/api/admin/targets/template?parent_id=${id}`} className="text-primary text-sm inline-flex items-center gap-1"><Download size={14} /> 下载模板</a>
-        <button onClick={save} className="bg-primary text-white px-3 py-1 text-sm rounded">保存分解</button>
+      <div className="mb-3 flex items-center gap-2">
+        <a href={`/api/admin/targets/template?parent_id=${id}`} download className="inline-flex items-center gap-1.5 border border-primary text-primary px-3 py-1 text-sm rounded-md hover:bg-primary/5">
+          <Download size={14} /> 下载模板
+        </a>
+        <input type="file" accept=".xlsx,.xls" ref={fileInputRef} onChange={handleImport} className="hidden" />
+        <button onClick={() => fileInputRef.current?.click()} className="inline-flex items-center gap-1.5 border border-primary text-primary px-3 py-1 text-sm rounded-md hover:bg-primary/5">
+          <Upload size={14} /> 导入分解
+        </button>
+        <button onClick={save} className="bg-primary text-white px-3 py-1 text-sm rounded-md inline-flex items-center gap-1.5 hover:bg-primary/90">保存分解</button>
         {saved && <span className="text-green-600 text-sm inline-flex items-center gap-1"><CheckCircle size={14} /> 已保存</span>}
       </div>
 
-      <table className="text-sm border-collapse">
+      <table className="text-sm border-collapse" style={{ fontVariantNumeric: 'tabular-nums' }}>
         <thead><tr className="bg-gray-100">
           <th className="border p-2 text-left w-32">战区(一级)</th>
           <th className="border p-2 text-left w-28">二级区域</th>
@@ -68,7 +95,7 @@ export default function BreakdownPage() {
               <td className="border p-2">{r.branch_name}</td>
               {metrics.map(m => (
                 <td key={m} className="border p-2">
-                  <input type="number" value={r.metrics?.[m] ?? ''} onChange={e => setCell(r.branch_num, m, e.target.value)} className="border rounded px-1 w-24 text-sm text-right" />
+                  <input type="number" value={r.metrics?.[m] ?? ''} onChange={e => setCell(r.branch_num, m, e.target.value)} className="border rounded px-1 w-24 text-sm text-right" style={{ fontVariantNumeric: 'tabular-nums' }} />
                 </td>
               ))}
             </tr>
