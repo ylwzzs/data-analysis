@@ -13,6 +13,8 @@ interface DimBranchRow {
   branch_code: string | null;
   branch_name: string | null;
   region_name: string | null;
+  first_level_region: string | null;
+  second_level_region: string | null;
   branch_groups: string | null;
   province: string | null;
   city: string | null;
@@ -41,6 +43,8 @@ function mapToDimBranch(b: Branch): DimBranchRow | null {
     branch_code: s(b.code),
     branch_name: s(b.name),
     region_name: s((b.branch_region || {}).name),
+    first_level_region: s((b.first_level_region || {}).name),
+    second_level_region: s((b.second_level_region || {}).name),
     branch_groups: s(b.branch_groups),
     province: s(b.province),
     city: s(b.city),
