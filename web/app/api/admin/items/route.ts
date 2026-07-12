@@ -7,23 +7,34 @@ const POSTGREST_URL = process.env.POSTGREST_URL || "http://postgrest:3000";
 const INSFORGE_API_KEY = process.env.INSFORGE_API_KEY!;
 const headers = { apikey: INSFORGE_API_KEY, Authorization: `Bearer ${INSFORGE_API_KEY}`, 'Content-Type': 'application/json' };
 
-// GET /api/admin/items?sbc=3120&top_category=&custom_group=&q=&page=1&page_size=20
-//     或 ?distinct=top_category&sbc=3120 → 返回去重品类列表 {data:[...]}
+// GET /api/admin/items?sbc=3120&category_l1=&category_l2=&custom_group=&q=&page=1&page_size=20
+//     或 ?distinct=category_l1&sbc=3120 → L1 列表；?distinct=category_l2&sbc=&category_l1= → L2 联动列表
 export async function GET(req: NextRequest) {
   const p = req.nextUrl.searchParams;
-  // distinct 支持：品类下拉用
-  if (p.get('distinct') === 'top_category') {
+  // distinct 支持：品类下拉（L1；L2 按 L1 联动）
+  if (p.get('distinct') === 'category_l1') {
     const sbcD = p.get('sbc') || '3120';
-    const r = await fetch(`${POSTGREST_URL}/item_admin_v?select=top_category&system_book_code=eq.${sbcD}&is_active=eq.true&order=top_category`, { headers });
+    const r = await fetch(`${POSTGREST_URL}/item_admin_v?select=category_l1&system_book_code=eq.${sbcD}&is_active=eq.true&order=category_l1`, { headers });
     const rows = await r.json();
-    const set = new Set(rows.map((x: any) => x.top_category).filter(Boolean));
+    const set = new Set(rows.map((x: any) => x.category_l1).filter(Boolean));
+    return NextResponse.json({ data: [...set] });
+  }
+  if (p.get('distinct') === 'category_l2') {
+    const sbcD = p.get('sbc') || '3120';
+    const l1 = p.get('category_l1');
+    const and = [`system_book_code=eq.${sbcD}`, `is_active=eq.true`];
+    if (l1) and.push(`category_l1=eq.${l1}`);
+    const r = await fetch(`${POSTGREST_URL}/item_admin_v?select=category_l2&${and.join('&')}&order=category_l2`, { headers });
+    const rows = await r.json();
+    const set = new Set(rows.map((x: any) => x.category_l2).filter(Boolean));
     return NextResponse.json({ data: [...set] });
   }
   const sbc = p.get('sbc') || '3120';
   const page = Number(p.get('page') || '1');
   const pageSize = Number(p.get('page_size') || '20');
   const and = [`system_book_code=eq.${sbc}`, `is_active=eq.true`];
-  if (p.get('top_category')) and.push(`top_category=eq.${p.get('top_category')}`);
+  if (p.get('category_l1')) and.push(`category_l1=eq.${p.get('category_l1')}`);
+  if (p.get('category_l2')) and.push(`category_l2=eq.${p.get('category_l2')}`);
   if (p.get('custom_group')) and.push(`custom_group=eq.${p.get('custom_group')}`);
   if (p.get('q')) {
     const q = p.get('q')!;

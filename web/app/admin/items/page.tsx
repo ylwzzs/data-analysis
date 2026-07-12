@@ -29,8 +29,9 @@ function ItemList({ sbc }: { sbc: string }) {
   const [data, setData] = useState<any[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const [filter, setFilter] = useState({ top_category: '', custom_group: '', q: '' });
-  const [cats, setCats] = useState<string[]>([]);
+  const [filter, setFilter] = useState({ category_l1: '', category_l2: '', custom_group: '', q: '' });
+  const [l1s, setL1s] = useState<string[]>([]);
+  const [l2s, setL2s] = useState<string[]>([]);
   const [edit, setEdit] = useState<any>(null);
   const [sel, setSel] = useState<Map<string, any>>(new Map());
   const [batch, setBatch] = useState<null | { field: 'custom_group' | 'note' }>(null);
@@ -44,12 +45,16 @@ function ItemList({ sbc }: { sbc: string }) {
     setData(j.data || []); setTotal(j.total || 0);
   };
 
-  const loadCats = async () => {
-    const r = await fetch(`/api/admin/items?distinct=top_category&sbc=${sbc}`);
-    const j = await r.json(); setCats(j.data || []);
+  const loadL1s = async () => {
+    const r = await fetch(`/api/admin/items?distinct=category_l1&sbc=${sbc}`);
+    const j = await r.json(); setL1s(j.data || []);
+  };
+  const loadL2s = async (l1: string) => {
+    const r = await fetch(`/api/admin/items?distinct=category_l2&sbc=${sbc}&category_l1=${encodeURIComponent(l1)}`);
+    const j = await r.json(); setL2s(j.data || []);
   };
 
-  useEffect(() => { setFilter({ top_category: '', custom_group: '', q: '' }); setSel(new Map()); query(1); loadCats(); }, [sbc]);
+  useEffect(() => { setFilter({ category_l1: '', category_l2: '', custom_group: '', q: '' }); setSel(new Map()); setL2s([]); query(1); loadL1s(); }, [sbc]);
 
   const toggle = (r: any) => {
     const m = new Map(sel); const k = key(r.system_book_code, r.item_num);
@@ -85,9 +90,13 @@ function ItemList({ sbc }: { sbc: string }) {
   return (
     <div>
       <div className="flex gap-2 mb-4 flex-wrap items-center">
-        <select value={filter.top_category} onChange={e => setFilter({ ...filter, top_category: e.target.value })} className="border px-2 py-1 text-sm rounded-md">
-          <option value="">全部品类</option>
-          {cats.map(c => <option key={c} value={c}>{c}</option>)}
+        <select value={filter.category_l1} onChange={e => { const l1 = e.target.value; setFilter({ ...filter, category_l1: l1, category_l2: '' }); setL2s([]); if (l1) loadL2s(l1); }} className="border px-2 py-1 text-sm rounded-md">
+          <option value="">全部一级</option>
+          {l1s.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+        <select value={filter.category_l2} onChange={e => setFilter({ ...filter, category_l2: e.target.value })} className="border px-2 py-1 text-sm rounded-md" disabled={!filter.category_l1}>
+          <option value="">全部二级</option>
+          {l2s.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
         <input placeholder="分组(如 重点品)" value={filter.custom_group} onChange={e => setFilter({ ...filter, custom_group: e.target.value })} className="border px-2 py-1 text-sm rounded-md" />
         <input placeholder="搜索 编号/名称/条码" value={filter.q} onChange={e => setFilter({ ...filter, q: e.target.value })} className="border px-2 py-1 text-sm rounded-md flex-1 min-w-[180px]" />
@@ -97,7 +106,7 @@ function ItemList({ sbc }: { sbc: string }) {
       <table className="w-full text-sm border-collapse tabular-nums">
         <thead><tr className="bg-gray-100">
           <th className="border p-2 w-8"><input type="checkbox" checked={allSel} onChange={toggleAll} /></th>
-          {['编号', '商品名称', '品类', '品牌', '分组(ext)', '备注(ext)', '操作'].map(h => <th key={h} className="border p-2 text-left">{h}</th>)}
+          {['编号', '商品名称', '一级品类', '二级品类', '三级品类', '品牌', '分组(ext)', '备注(ext)', '操作'].map(h => <th key={h} className="border p-2 text-left">{h}</th>)}
         </tr></thead>
         <tbody>
           {data.map((r: any) => {
@@ -107,7 +116,9 @@ function ItemList({ sbc }: { sbc: string }) {
                 <td className="border p-2 text-center"><input type="checkbox" checked={sel.has(k)} onChange={() => toggle(r)} /></td>
                 <td className="border p-2">{r.item_num}</td>
                 <td className="border p-2">{r.item_name}</td>
-                <td className="border p-2">{r.category_path || r.category_name || '-'}</td>
+                <td className="border p-2">{r.category_l1 || '-'}</td>
+                <td className="border p-2">{r.category_l2 || '-'}</td>
+                <td className="border p-2">{r.category_l3 || '-'}</td>
                 <td className="border p-2">{r.item_brand || '-'}</td>
                 <td className="border p-2">{r.custom_group || '-'}</td>
                 <td className="border p-2">{r.note || '-'}</td>
