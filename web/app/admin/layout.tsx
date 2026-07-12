@@ -14,12 +14,12 @@ export default async function AdminLayout({
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
-      <header className="bg-white border-b px-4 py-3 flex items-center justify-between">
+      <header className="bg-white border-b px-4 py-2 flex items-center justify-between">
         <div className="flex items-center gap-4">
           <Link href="/admin/dashboard" className="font-bold text-lg">
             数据分析平台
           </Link>
-          <span className="text-sm text-gray-500 bg-gray-100 px-2 py-1 rounded">
+          <span className="text-sm text-gray-500 bg-gray-100 px-2 py-1 rounded-full">
             管理后台
           </span>
         </div>
@@ -33,7 +33,7 @@ export default async function AdminLayout({
 
       <div className="flex">
         {/* Sidebar */}
-        <aside className="w-[200px] bg-white border-r min-h-[calc(100vh-57px)]">
+        <aside className="w-[200px] bg-white border-r min-h-[calc(100vh-49px)]">
           <nav className="p-4 space-y-2">
             <NavItem href="/admin/dashboard" icon={<LayoutDashboard size={16} />}>仪表盘</NavItem>
             <div className="pt-2">
@@ -72,14 +72,14 @@ function NavItem({ href, icon, children, disabled }: {
 }) {
   if (disabled) {
     return (
-      <span className="flex items-center gap-2 px-3 py-2 text-sm text-gray-400 cursor-not-allowed">
+      <span className="flex items-center gap-2 px-2 py-2 text-sm text-gray-400 cursor-not-allowed rounded-md">
         {icon}
         {children}
       </span>
     );
   }
   return (
-    <Link href={href} className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded">
+    <Link href={href} className="flex items-center gap-2 px-2 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-md">
       {icon}
       {children}
     </Link>
@@ -88,7 +88,7 @@ function NavItem({ href, icon, children, disabled }: {
 
 function SubNavItem({ href, children }: { href: string; children: ReactNode }) {
   return (
-    <Link href={href} className="block px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-50 rounded">
+    <Link href={href} className="block px-2 py-1 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-50 rounded-md">
       {children}
     </Link>
   );

@@ -66,15 +66,15 @@ export default function BreakdownPage() {
     <div className="p-4">
       <a href="/admin/targets" className="text-primary text-sm inline-flex items-center gap-1"><ArrowLeft size={14} /> 返回目标列表</a>
       <h1 className="text-xl font-bold my-2">目标分解</h1>
-      <div className="mb-3 flex items-center gap-2">
-        <a href={`/api/admin/targets/template?parent_id=${id}`} download className="inline-flex items-center gap-1.5 border border-primary text-primary px-3 py-1 text-sm rounded-md hover:bg-primary/5">
+      <div className="mb-4 flex items-center gap-2">
+        <a href={`/api/admin/targets/template?parent_id=${id}`} download className="inline-flex items-center gap-1.5 border border-primary text-primary px-4 py-1 text-sm rounded-md hover:bg-primary/5">
           <Download size={14} /> 下载模板
         </a>
         <input type="file" accept=".xlsx,.xls" ref={fileInputRef} onChange={handleImport} className="hidden" />
-        <button onClick={() => fileInputRef.current?.click()} className="inline-flex items-center gap-1.5 border border-primary text-primary px-3 py-1 text-sm rounded-md hover:bg-primary/5">
+        <button onClick={() => fileInputRef.current?.click()} className="inline-flex items-center gap-1.5 border border-primary text-primary px-4 py-1 text-sm rounded-md hover:bg-primary/5">
           <Upload size={14} /> 导入分解
         </button>
-        <button onClick={save} className="bg-primary text-white px-3 py-1 text-sm rounded-md inline-flex items-center gap-1.5 hover:bg-primary/90">保存分解</button>
+        <button onClick={save} className="bg-primary text-white px-4 py-1 text-sm rounded-md inline-flex items-center gap-1.5 hover:bg-primary/90">保存分解</button>
         {saved && <span className="text-green-600 text-sm inline-flex items-center gap-1"><CheckCircle size={14} /> 已保存</span>}
       </div>
 
@@ -95,7 +95,7 @@ export default function BreakdownPage() {
               <td className="border p-2">{r.branch_name}</td>
               {metrics.map(m => (
                 <td key={m} className="border p-2">
-                  <input type="number" value={r.metrics?.[m] ?? ''} onChange={e => setCell(r.branch_num, m, e.target.value)} className="border rounded px-1 w-24 text-sm text-right" style={{ fontVariantNumeric: 'tabular-nums' }} />
+                  <input type="number" value={r.metrics?.[m] ?? ''} onChange={e => setCell(r.branch_num, m, e.target.value)} className="border rounded-md px-1 w-24 text-sm text-right" style={{ fontVariantNumeric: 'tabular-nums' }} />
                 </td>
               ))}
             </tr>

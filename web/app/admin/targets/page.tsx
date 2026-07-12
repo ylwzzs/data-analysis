@@ -14,9 +14,9 @@ export default function TargetsPage() {
   useEffect(() => { load(); }, []);
   return (
     <div className="p-4">
-      <h1 className="text-xl font-bold mb-3">目标管理</h1>
-      <div className="mb-3"><button onClick={() => setShow(true)} className="bg-primary text-white px-3 py-1 text-sm rounded">新建总目标</button></div>
-      <table className="w-full text-sm border-collapse">
+      <h1 className="text-xl font-bold mb-4">目标管理</h1>
+      <div className="mb-4"><button onClick={() => setShow(true)} className="bg-primary text-white px-4 py-1 text-sm rounded-md">新建总目标</button></div>
+      <table className="w-full text-sm border-collapse tabular-nums">
         <thead><tr className="bg-gray-100">{['名称', '品牌', '周期', '指标', '目标', '达成', '状态', '操作'].map(h => <th key={h} className="border p-2 text-left">{h}</th>)}</tr></thead>
         <tbody>
           {list.map((t: any) => (
@@ -71,20 +71,20 @@ function TotalForm({ onSaved, onClose }: { onSaved: () => void; onClose: () => v
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={onClose}>
-      <div className="bg-white rounded-lg shadow-xl w-[560px] max-w-[92vw] max-h-[92vh] overflow-auto p-5" onClick={e => e.stopPropagation()}>
+      <div className="bg-white rounded-lg shadow-xl w-[560px] max-w-[92vw] max-h-[92vh] overflow-auto p-6" onClick={e => e.stopPropagation()}>
         <div className="flex justify-between items-center mb-4">
           <h2 className="font-bold text-lg">新建总目标</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
         </div>
 
-        <div className="grid grid-cols-3 gap-3 mb-4">
-          <div className="col-span-1"><label className="text-xs text-gray-500">目标名称</label><input value={name} onChange={e => setName(e.target.value)} placeholder="7月经营目标" className="border rounded w-full px-2 py-1.5 text-sm" /></div>
-          <div><label className="text-xs text-gray-500">开始日期</label><input type="date" value={start} onChange={e => setStart(e.target.value)} className="border rounded w-full px-2 py-1.5 text-sm" /></div>
-          <div><label className="text-xs text-gray-500">结束日期</label><input type="date" value={end} onChange={e => setEnd(e.target.value)} className="border rounded w-full px-2 py-1.5 text-sm" /></div>
+        <div className="grid grid-cols-3 gap-4 mb-4">
+          <div className="col-span-1"><label className="text-xs text-gray-500">目标名称</label><input value={name} onChange={e => setName(e.target.value)} placeholder="7月经营目标" className="border rounded-md w-full px-2 py-1 text-sm" /></div>
+          <div><label className="text-xs text-gray-500">开始日期</label><input type="date" value={start} onChange={e => setStart(e.target.value)} className="border rounded-md w-full px-2 py-1 text-sm" /></div>
+          <div><label className="text-xs text-gray-500">结束日期</label><input type="date" value={end} onChange={e => setEnd(e.target.value)} className="border rounded-md w-full px-2 py-1 text-sm" /></div>
         </div>
 
         <label className="text-xs text-gray-500">指标明细 <span className="text-gray-400">（每行一个指标，可增删）</span></label>
-        <table className="w-full text-sm border-collapse mt-1 mb-3">
+        <table className="w-full text-sm border-collapse mt-1 mb-4">
           <thead><tr className="bg-gray-100">
             <th className="border p-2 text-left font-normal w-[45%]">指标</th>
             <th className="border p-2 text-left font-normal">目标值</th>
@@ -94,12 +94,12 @@ function TotalForm({ onSaved, onClose }: { onSaved: () => void; onClose: () => v
             {rows.map((r, i) => (
               <tr key={i}>
                 <td className="border p-1">
-                  <select value={r.metric_code} onChange={e => setRow(i, { metric_code: e.target.value })} className="border rounded w-full px-2 py-1 text-sm bg-white">
+                  <select value={r.metric_code} onChange={e => setRow(i, { metric_code: e.target.value })} className="border rounded-md w-full px-2 py-1 text-sm bg-white">
                     <option value="">请选择...</option>
                     {METRICS.map(m => <option key={m.code} value={m.code}>{m.name}</option>)}
                   </select>
                 </td>
-                <td className="border p-1"><input type="number" value={r.target_value} onChange={e => setRow(i, { target_value: e.target.value })} placeholder="目标值" className="border rounded w-full px-2 py-1 text-sm text-right" /></td>
+                <td className="border p-1"><input type="number" value={r.target_value} onChange={e => setRow(i, { target_value: e.target.value })} placeholder="目标值" className="border rounded-md w-full px-2 py-1 text-sm text-right tabular-nums" /></td>
                 <td className="border p-1 text-center"><button onClick={() => delRow(i)} className="text-gray-400 hover:text-red-600 inline-flex items-center justify-center" title="删除该行"><Trash2 size={14} /></button></td>
               </tr>
             ))}
@@ -109,8 +109,8 @@ function TotalForm({ onSaved, onClose }: { onSaved: () => void; onClose: () => v
 
         {err && <div className="text-red-600 text-sm mb-2">{err}</div>}
         <div className="flex justify-end gap-2 pt-2 border-t">
-          <button onClick={onClose} className="border border-gray-300 px-4 py-1.5 text-sm rounded hover:bg-gray-50">取消</button>
-          <button onClick={submit} className="bg-primary text-white px-4 py-1.5 text-sm rounded hover:bg-primary/90">保存总目标</button>
+          <button onClick={onClose} className="border border-gray-300 px-4 py-1 text-sm rounded-md hover:bg-gray-50">取消</button>
+          <button onClick={submit} className="bg-primary text-white px-4 py-1 text-sm rounded-md hover:bg-primary/90">保存总目标</button>
         </div>
       </div>
     </div>
