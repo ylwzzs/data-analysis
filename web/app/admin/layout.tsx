@@ -1,7 +1,7 @@
 import { ReactNode } from 'react';
 import Link from 'next/link';
 import { cookies } from 'next/headers';
-import { LayoutDashboard, Package, Store, Target, Users, Settings } from 'lucide-react';
+import { LayoutDashboard, Package, Store, Target, Users, Settings, Boxes } from 'lucide-react';
 
 export default async function AdminLayout({
   children,
@@ -46,6 +46,9 @@ export default async function AdminLayout({
             </div>
             <div className="pt-2">
               <NavItem href="/admin/branches" icon={<Store size={16} />}>门店维护</NavItem>
+            </div>
+            <div className="pt-2">
+              <NavItem href="/admin/items" icon={<Boxes size={16} />}>商品维护</NavItem>
             </div>
             <div className="pt-2">
               <NavItem href="/admin/targets" icon={<Target size={16} />}>目标管理</NavItem>
