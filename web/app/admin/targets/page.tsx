@@ -1,20 +1,21 @@
 // web/app/admin/targets/page.tsx
-// 目标分解：总目标列表 + 创建总目标(多指标) + 分解到门店(批量编辑/上传)+汇总校验
+// 目标管理：总目标列表 + 新建总目标(Modal 明细表式 指标=行) + 分解入口
 'use client';
 import { useState, useEffect } from 'react';
 
 export default function TargetsPage() {
   const [list, setList] = useState<any[]>([]);
   const [show, setShow] = useState(false);
-  const [edit, setEdit] = useState<any>(null);
-  const load = async () => { const r = await fetch('/api/admin/targets'); const j = await r.json(); setList((j.data || []).filter((t: any) => t.target_level !== 'breakdown' || t.parent_target_id === null)); };
+  const load = async () => {
+    const r = await fetch('/api/admin/targets'); const j = await r.json();
+    setList((j.data || []).filter((t: any) => t.target_level !== 'breakdown' || t.parent_target_id === null));
+  };
   useEffect(() => { load(); }, []);
   return (
     <div className="p-4">
       <h1 className="text-xl font-bold mb-3">目标管理</h1>
-      <div className="mb-3"><button onClick={() => { setShow(!show); setEdit(null); }} className="bg-blue-600 text-white px-3 py-1 text-sm rounded">{show ? '收起' : '新建总目标'}</button></div>
-      {show && <TotalForm onSaved={() => { setShow(false); load(); }} edit={edit} />}
-      <table className="w-full text-sm border-collapse mt-2">
+      <div className="mb-3"><button onClick={() => setShow(true)} className="bg-blue-600 text-white px-3 py-1 text-sm rounded">新建总目标</button></div>
+      <table className="w-full text-sm border-collapse">
         <thead><tr className="bg-gray-100">{['名称', '品牌', '周期', '指标', '目标', '达成', '状态', '操作'].map(h => <th key={h} className="border p-2 text-left">{h}</th>)}</tr></thead>
         <tbody>
           {list.map((t: any) => (
@@ -29,50 +30,88 @@ export default function TargetsPage() {
           ))}
         </tbody>
       </table>
+      {show && <TotalForm onSaved={() => { setShow(false); load(); }} onClose={() => setShow(false)} />}
     </div>
   );
 }
 
-// 创建总目标（多指标默认全选可叉）
-function TotalForm({ onSaved, edit }: { onSaved: () => void; edit: any }) {
-  const ALL = [{ code: 'sale', name: '销售总额' }, { code: 'purchase', name: '拿货量' }, { code: 'wholesale', name: '批发额' }];
-  const [picked, setPicked] = useState<string[]>(['sale', 'purchase', 'wholesale']);
-  const [vals, setVals] = useState<Record<string, string>>({});
-  const [name, setName] = useState(''); const [start, setStart] = useState(''); const [end, setEnd] = useState('');
+const METRICS = [
+  { code: 'sale', name: '销售总额' },
+  { code: 'purchase', name: '拿货量' },
+  { code: 'wholesale', name: '批发额' },
+];
+
+// 新建总目标：Modal + 指标明细表（每行一个指标，增删行）
+function TotalForm({ onSaved, onClose }: { onSaved: () => void; onClose: () => void }) {
+  const [name, setName] = useState('');
+  const [start, setStart] = useState('');
+  const [end, setEnd] = useState('');
+  const [rows, setRows] = useState<{ metric_code: string; target_value: string }[]>([{ metric_code: 'sale', target_value: '' }]);
   const [err, setErr] = useState('');
+
+  const setRow = (i: number, patch: Partial<{ metric_code: string; target_value: string }>) => setRows(rows.map((r, idx) => idx === i ? { ...r, ...patch } : r));
+  const addRow = () => setRows([...rows, { metric_code: '', target_value: '' }]);
+  const delRow = (i: number) => setRows(rows.filter((_, idx) => idx !== i));
+
   const submit = async () => {
     setErr('');
-    if (!name || !start || !end || picked.length === 0) { setErr('请填全'); return; }
-    const r = await fetch('/api/admin/targets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, start_date: start, end_date: end, metrics: picked.map(m => ({ metric_code: m, target_value: Number(vals[m] || 0) })) }) });
-    const j = await r.json(); if (j.ok) onSaved(); else setErr(j.error || '失败');
+    if (!name || !start || !end) { setErr('请填名称和周期'); return; }
+    const valid = rows.filter(r => r.metric_code && r.target_value);
+    if (valid.length === 0) { setErr('至少填一个指标及其目标值'); return; }
+    const dup = new Set(valid.map(r => r.metric_code));
+    if (dup.size !== valid.length) { setErr('指标不能重复'); return; }
+    const r = await fetch('/api/admin/targets', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, start_date: start, end_date: end, metrics: valid.map(r => ({ metric_code: r.metric_code, target_value: Number(r.target_value) })) }),
+    });
+    const j = await r.json();
+    if (j.ok) onSaved(); else setErr(j.error || '保存失败');
   };
+
   return (
-    <div className="border rounded p-3 mb-3 bg-gray-50">
-      <div className="flex gap-2 mb-2 flex-wrap">
-        <input placeholder="目标名称" value={name} onChange={e => setName(e.target.value)} className="border px-2 py-1 text-sm rounded" />
-        <input type="date" value={start} onChange={e => setStart(e.target.value)} className="border px-2 py-1 text-sm rounded" />
-        <input type="date" value={end} onChange={e => setEnd(e.target.value)} className="border px-2 py-1 text-sm rounded" />
-      </div>
-      <div className="flex gap-2 flex-wrap mb-2">
-        {ALL.map(m => (
-          <span key={m.code} onClick={() => setPicked(picked.includes(m.code) ? picked.filter(x => x !== m.code) : [...picked, m.code])}
-            className={`px-3 py-1 text-sm rounded-full cursor-pointer border ${picked.includes(m.code) ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-500'}`}>
-            {m.name} {picked.includes(m.code) && ' ✕'}
-          </span>
-        ))}
-      </div>
-      {picked.length > 0 && (
-        <div className="flex gap-2 mb-2 flex-wrap items-center">
-          <span className="text-sm text-gray-600">目标值（必填）：</span>
-          {ALL.filter(m => picked.includes(m.code)).map(m => (
-            <label key={m.code} className="text-sm flex items-center gap-1 bg-white border rounded px-2 py-1">
-              {m.name}<input type="number" placeholder="值" value={vals[m.code] || ''} onChange={e => setVals({ ...vals, [m.code]: e.target.value })} className="border-l px-2 py-0.5 w-28 outline-none" />
-            </label>
-          ))}
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={onClose}>
+      <div className="bg-white rounded-lg shadow-xl w-[560px] max-w-[92vw] max-h-[92vh] overflow-auto p-5" onClick={e => e.stopPropagation()}>
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="font-bold text-lg">新建总目标</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
         </div>
-      )}
-      <button onClick={submit} className="bg-blue-600 text-white px-3 py-1 text-sm rounded">保存总目标</button>
-      {err && <span className="text-red-600 ml-2 text-sm">{err}</span>}
+
+        <div className="grid grid-cols-3 gap-3 mb-4">
+          <div className="col-span-1"><label className="text-xs text-gray-500">目标名称</label><input value={name} onChange={e => setName(e.target.value)} placeholder="7月经营目标" className="border rounded w-full px-2 py-1.5 text-sm" /></div>
+          <div><label className="text-xs text-gray-500">开始日期</label><input type="date" value={start} onChange={e => setStart(e.target.value)} className="border rounded w-full px-2 py-1.5 text-sm" /></div>
+          <div><label className="text-xs text-gray-500">结束日期</label><input type="date" value={end} onChange={e => setEnd(e.target.value)} className="border rounded w-full px-2 py-1.5 text-sm" /></div>
+        </div>
+
+        <label className="text-xs text-gray-500">指标明细 <span className="text-gray-400">（每行一个指标，可增删）</span></label>
+        <table className="w-full text-sm border-collapse mt-1 mb-3">
+          <thead><tr className="bg-gray-100">
+            <th className="border p-2 text-left font-normal w-[45%]">指标</th>
+            <th className="border p-2 text-left font-normal">目标值</th>
+            <th className="border p-2 text-left font-normal w-12">操作</th>
+          </tr></thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={i}>
+                <td className="border p-1">
+                  <select value={r.metric_code} onChange={e => setRow(i, { metric_code: e.target.value })} className="border rounded w-full px-2 py-1 text-sm bg-white">
+                    <option value="">请选择...</option>
+                    {METRICS.map(m => <option key={m.code} value={m.code}>{m.name}</option>)}
+                  </select>
+                </td>
+                <td className="border p-1"><input type="number" value={r.target_value} onChange={e => setRow(i, { target_value: e.target.value })} placeholder="目标值" className="border rounded w-full px-2 py-1 text-sm text-right" /></td>
+                <td className="border p-1 text-center"><button onClick={() => delRow(i)} className="text-gray-400 hover:text-red-600" title="删除该行">🗑</button></td>
+              </tr>
+            ))}
+            <tr><td colSpan={3} className="border p-0"><button onClick={addRow} className="w-full py-2 text-sm text-blue-600 hover:bg-blue-50">＋ 添加指标行</button></td></tr>
+          </tbody>
+        </table>
+
+        {err && <div className="text-red-600 text-sm mb-2">{err}</div>}
+        <div className="flex justify-end gap-2 pt-2 border-t">
+          <button onClick={onClose} className="border border-gray-300 px-4 py-1.5 text-sm rounded hover:bg-gray-50">取消</button>
+          <button onClick={submit} className="bg-blue-600 text-white px-4 py-1.5 text-sm rounded hover:bg-blue-700">保存总目标</button>
+        </div>
+      </div>
     </div>
   );
 }
