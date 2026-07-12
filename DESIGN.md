@@ -1,0 +1,62 @@
+# Design System — 数据分析平台
+
+> 所有视觉/UI 决策先读此文件。字体/色彩/间距/美学方向在此定义，未经用户同意不要偏离。QA 模式下，不符合 DESIGN.md 的代码要标记。
+
+## Product Context
+- **是什么**：鲜果恰恰零售数据分析平台（257 店、2 品牌 3120/64188），把销售/配送/批发/目标达成数据呈现给业务用户
+- **给谁**：老板/运营总（看全公司大盘）、店长（看本店）、业务/采购（看品类/客户）
+- **空间**：零售 + 数据分析/BI（对标 Tableau/PowerBI/观远/FineBI）
+- **类型**：web app / BI dashboard，PC 为主 + 企微内移动适配
+- **记忆点**：**专业经营分析**——克制、数据密集、可信，像 BI 工具不像花哨 SaaS
+
+## Aesthetic Direction
+- **方向**：Industrial/Utilitarian（功能优先、数据密集、克制）
+- **装饰**：minimal——数据为主，无装饰噪音（无紫色渐变、无装饰 blob、无居中堆叠）
+- **调性**：Tableau/PowerBI 同源的专业经营分析感
+- **参考**：Tableau、PowerBI、观远 BI、FineBI
+
+## Typography
+- **Display/Hero**：DM Sans 700（现代专业、开源，避开过用的 Inter/Roboto）
+- **Body**：DM Sans 400/500
+- **UI/Labels**：DM Sans 500（同 body）
+- **Data/Tables**：DM Sans + `font-variant-numeric: tabular-nums`（**报表数字对齐必需**）
+- **Code**：JetBrains Mono（如需）
+- **加载**：Google Fonts CDN `<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap">`
+- **Scale**：12(sm)/14(body)/16(lg)/18/20/24/30/40（rem 对应 0.75/0.875/1/1.125/1.25/1.5/1.875/2.5）
+
+## Color
+- **策略**：balanced（主色 + 中性 + 语义色，色彩稀有且有意义）
+- **Primary**：`#1E40AF`（深蓝，专业/信任，CTA/链接/重点）
+- **Neutrals**（cool slate）：bg `#F8FAFC` / surface `#FFFFFF` / border `#E2E8F0` / muted `#64748B` / faint `#94A3B8` / text `#0F172A`
+- **Semantic**：success `#16A34A`（达成>进度）/ warning `#D97706`（接近）/ error `#DC2626`（落后）/ info `#1E40AF`
+- **数据可视化**：色盲安全板。达成率三色编码（绿/琥珀/红）；多系列趋势用 primary 蓝 + 蓝色梯度（#1E40AF→#60A5FA）+ 灰
+- **Dark mode**：primary 亮一档 `#3B82F6`，bg `#0F172A`，surface `#1E293B`，border `#334155`，text `#F1F5F9`，语义色饱和度降 15%
+
+## Spacing
+- **base**：8px
+- **密度**：comfortable（信息密度高但有序呼吸）
+- **Scale**：2xs(2) xs(4) sm(8) md(16) lg(24) xl(32) 2xl(48) 3xl(64)
+
+## Layout
+- **策略**：grid-disciplined（严格网格，报表对齐）
+- **网格**：PC 12 列；移动单列卡片流
+- **内容宽**：看板 1100px 居中；管理后台 full width
+- **圆角**：sm 4px（输入/小元素）/ md 8px（卡片/按钮）/ lg 12px（看板容器）/ full 9999px（标签/徽章）
+
+## Motion
+- **策略**：minimal-functional（只过渡辅助理解，不花哨）
+- **Easing**：enter ease-out / exit ease-in / move ease-in-out
+- **Duration**：micro 50-100ms（hover）/ short 150-250ms（展开/切换）/ medium 250-400ms（页面/弹窗）
+
+## 报表中心特定约定
+- **达成率三色编码**：绿(>时间进度) / 琥珀(接近 80-99%) / 红(<80% 落后)——零售达成特色
+- **看板三段式**：KPI 大数字卡 → 图表（趋势/排行）→ 类 Excel 交叉表 + 明细下钻
+- **类 Excel 交叉表**：tabular-nums + 维度切换（行/列各一维）+ 点单元格下钻 + 战区/二级区域合并单元格
+- **KPI 卡**：达成率用 primary 蓝，落后/差额用 error 红，跑赢进度用 success 绿小字标注
+- **每组件操作**：图表/交叉表右上角 ⬇Excel/🖼图片/🔗分享（组件级，非全页）
+- **导出**：Excel（xlsx 数据）/ 图片（html2canvas）/ PDF（PC）；移动端只"生成分享图"（卡片图转企微）
+
+## Decisions Log
+| 日期 | 决策 | 理由 |
+|------|------|------|
+| 2026-07-12 | 初始设计系统 | /design-consultation 基于产品上下文 + 记忆点"专业经营分析" + 零售 BI 竞品研究（Tableau/PowerBI） |

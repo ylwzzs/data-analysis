@@ -330,3 +330,13 @@ ssh server "docker exec deploy-web-1 node -e '<测试代码>'"
 | API Key 无效 | 部署脚本检测 Key 有效性，无效时自动获取新 Key |
 | nginx 配置语法错误 | location 必须在 server block 内，不能独立成文件 |
 | PostgREST schema 缓存 | 修改表结构后必须重启 PostgREST |
+
+## Design System
+
+**做任何视觉/UI 决策前先读 `DESIGN.md`。** 字体/色彩/间距/美学/报表特定约定全在那里定义。
+
+- 字体：DM Sans + tabular-nums（数据对齐）
+- 色彩：主色深蓝 #1E40AF + slate 中性 + 达成三色（绿/琥珀/红）
+- 美学：Industrial/Utilitarian（专业经营分析，Tableau/PowerBI 同源）
+- 报表中心：KPI 三段式 + 类Excel交叉表（tabular-nums+维度切换+下钻+合并单元格）+ 达成率三色编码 + 每组件 ⬇Excel/🖼图片/🔗分享
+- 未经用户同意不要偏离 DESIGN.md。QA 时标记不符合 DESIGN.md 的代码。
