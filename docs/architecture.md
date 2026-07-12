@@ -954,6 +954,39 @@ POST /compute {"report_type":"daily_supplier","date_from":"2026-07-02","date_to"
 | `/reports` | GET | 查询可用报表列表 |
 | `/compute` | POST | 执行报表计算（从配置读取） |
 
+### 10.8 目标与达成子系统（两类目标模型）
+
+目标分两类，复用 `targets` 表的 total→breakdown（`parent_target_id`）机制，**分解轴不同**：
+
+| 类型 | `target_type` | 总目标(total) | 分解轴(breakdown) | 指标 |
+|------|---------------|---------------|-------------------|------|
+| 门店目标 | `store` | branch_num='ALL' | **门店**(branch_num) | `sale`(销售) + `delivery`(配送) |
+| 总部目标 | `hq` | branch_num='ALL', category=NULL | **品类**(category) | `outbound_amt`(出库金额) + `outbound_profit`(出库毛利) |
+
+**targets 表关键字段**：
+- `target_type TEXT NOT NULL DEFAULT 'store'` — 'hq'/'store'
+- `category TEXT` — hq 品类分解值（'水果'/'标品耗材'），store 与 hq 总目标为 NULL
+- UNIQUE 改为 `(system_book_code, target_type, branch_num, category, start_date, end_date)`（同周期允许 hq 多品类行 + 区分 hq/store 总目标）
+
+**指标口径**（`metric_definitions`，达成数据源留 Phase 2 接入）：
+| metric_code | 名称 | 口径 |
+|---|---|---|
+| `sale` | 销售 | `report_daily_sales.total_sale`（按门店+日期段） |
+| `delivery` | 配送(门店调入) | `delivery_detail.out_money` 按 `response_branch_num` |
+| `outbound_amt` | 出库金额 | `delivery_detail.out_money` + `wholesale_detail.wholesale_money` |
+| `outbound_profit` | 出库毛利 | `delivery_detail.profit_money` + `wholesale_detail.wholesale_profit`（批发毛利=销售金额−销售成本） |
+
+**品类分组**（总部目标分解用，映射 `dim_item.category_l1`）：水果=生鲜；标品·耗材=标品+包装耗材+运费/仓储用耗材+广西柳州；废弃档案排除。
+
+**RPC**（SECURITY DEFINER，直连 PostgREST `/rpc`）：
+- `upsert_target_total(p_id,p_name,p_sbc,p_start,p_end,p_metrics,p_target_type,p_by)` — 建/改总目标（两类）
+- `upsert_target_breakdown(p_parent_id,p_sbc,p_rows,p_by)` — 门店分解（rows:[{branch_num,metrics}]，现状不变）
+- `upsert_hq_category_breakdown(p_parent_id,p_rows,p_by)` — 总部品类分解（rows:[{category,metrics}]）
+- `check_breakdown_balance(p_parent_id)` — 校验子和=总（两类通用）
+- `get_breakdown(p_parent_id)`（门店轴）/ `get_hq_category_breakdown(p_parent_id)`（品类轴）
+
+**达成（actual）**：`report_achievement_v` 暴露 `target_type`/`category` 列；目前仅 `sale` 有 actual（`report_daily_sales` LATERAL），其余指标 `data_ready=false`→`actual=NULL,data_status='not_ready'`。hq 达成（delivery+wholesale 按品类聚合）留 Phase 2 报表中心。
+
 ---
 
 ## 十一、待实现/待讨论
