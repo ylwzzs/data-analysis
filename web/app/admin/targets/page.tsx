@@ -57,10 +57,20 @@ function TotalForm({ onSaved, edit }: { onSaved: () => void; edit: any }) {
         {ALL.map(m => (
           <span key={m.code} onClick={() => setPicked(picked.includes(m.code) ? picked.filter(x => x !== m.code) : [...picked, m.code])}
             className={`px-3 py-1 text-sm rounded-full cursor-pointer border ${picked.includes(m.code) ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-500'}`}>
-            {m.name} {picked.includes(m.code) && '✕'} {picked.includes(m.code) && <input type="number" placeholder="值" value={vals[m.code] || ''} onClick={e => e.stopPropagation()} onChange={e => setVals({ ...vals, [m.code]: e.target.value })} className="w-16 ml-1 text-black px-1" />}
+            {m.name} {picked.includes(m.code) && ' ✕'}
           </span>
         ))}
       </div>
+      {picked.length > 0 && (
+        <div className="flex gap-2 mb-2 flex-wrap items-center">
+          <span className="text-sm text-gray-600">目标值（必填）：</span>
+          {ALL.filter(m => picked.includes(m.code)).map(m => (
+            <label key={m.code} className="text-sm flex items-center gap-1 bg-white border rounded px-2 py-1">
+              {m.name}<input type="number" placeholder="值" value={vals[m.code] || ''} onChange={e => setVals({ ...vals, [m.code]: e.target.value })} className="border-l px-2 py-0.5 w-28 outline-none" />
+            </label>
+          ))}
+        </div>
+      )}
       <button onClick={submit} className="bg-blue-600 text-white px-3 py-1 text-sm rounded">保存总目标</button>
       {err && <span className="text-red-600 ml-2 text-sm">{err}</span>}
     </div>
