@@ -58,7 +58,7 @@ function BranchList({ sbc }: { sbc: string }) {
         <button onClick={() => query(1)} className="bg-blue-600 text-white px-3 py-1 text-sm rounded">查询</button>
       </div>
       <table className="w-full text-sm border-collapse">
-        <thead><tr className="bg-gray-100">{['门店号', '名称', '战区(一级)', '二级区域', '区域', '城市', '分组(ext)', '备注(ext)', '操作'].map(h => <th key={h} className="border p-2 text-left">{h}</th>)}</tr></thead>
+        <thead><tr className="bg-gray-100">{['门店号', '名称', '战区(一级)', '二级区域', '城市', '分组(ext)', '备注(ext)', '操作'].map(h => <th key={h} className="border p-2 text-left">{h}</th>)}</tr></thead>
         <tbody>
           {data.map((r: any) => (
             <tr key={`${r.system_book_code}-${r.branch_num}`}>
@@ -66,7 +66,6 @@ function BranchList({ sbc }: { sbc: string }) {
               <td className="border p-2">{r.branch_name}</td>
               <td className="border p-2">{r.war_zone || <span className="text-red-600">⚠ 无战区</span>}</td>
               <td className="border p-2">{r.region_l2 || '-'}</td>
-              <td className="border p-2">{r.region_name || '-'}</td>
               <td className="border p-2">{r.city}</td>
               <td className="border p-2">{r.custom_group || '-'}</td>
               <td className="border p-2">{r.note || '-'}</td>
