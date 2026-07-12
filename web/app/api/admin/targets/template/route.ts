@@ -7,7 +7,7 @@ const POSTGREST_URL = process.env.POSTGREST_URL || "http://postgrest:3000";
 const INSFORGE_API_KEY = process.env.INSFORGE_API_KEY!;
 const headers = { apikey: INSFORGE_API_KEY, Authorization: `Bearer ${INSFORGE_API_KEY}`, 'Content-Type': 'application/json' };
 
-const METRIC_NAME: Record<string, string> = { sale: '销售总额', purchase: '拿货量', wholesale: '批发额' };
+const METRIC_NAME: Record<string, string> = { sale: '销售总额', delivery: '配送', outbound_amt: '出库金额', outbound_profit: '出库毛利' };
 const CODE: Record<string, string> = Object.fromEntries(Object.entries(METRIC_NAME).map(([k, v]) => [v, k]));
 
 // GET 模板（.xlsx：第1行参考总目标，第2行表头，第3+行门店明细）
