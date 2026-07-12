@@ -43,6 +43,20 @@
 - **内容宽**：看板 1100px 居中；管理后台 full width
 - **圆角**：sm 4px（输入/小元素）/ md 8px（卡片/按钮）/ lg 12px（看板容器）/ full 9999px（标签/徽章）
 
+## Icon
+- **库**：lucide-react（项目已装，shadcn 配套）。**禁 emoji**（🎯📊🏠🚚📦⬇🖼🔗 这种 AI 味重、不专业、各平台渲染不一致、无障碍差）
+- **尺寸**：sm 16px / md 20px / lg 24px，stroke-width 1.5（轻量专业，不用 2+ 粗描边）
+- **颜色**：`currentColor`（继承文本色）；语义场景配语义色（成功 Check=success / 警告 AlertTriangle=warning / 错误 XCircle=error）
+- **语义映射**（常用，统一用这套，不混）：
+  - 目标/达成 = `Target`（或 `Trophy`）
+  - 仪表盘 = `LayoutDashboard`；门店 = `Store`；商品 = `Package`；配送 = `Truck`；批发 = `ShoppingCart`
+  - 趋势 = `TrendingUp`；排行 = `BarChart3`；Top = `Crown`（克制，不用 `Flame`）
+  - 导出 Excel = `Download`；图片 = `Image`；PDF = `FileText`；分享 = `Share2`
+  - 查询/搜索 = `Search`；新建 = `Plus`；编辑 = `Pencil`；删除 = `Trash2`
+  - 确认 = `Check`；关闭 = `X`；下拉/切换 = `ChevronDown`；返回 = `ArrowLeft`；战区/区域 = `MapPin`
+- **对齐**：图标与文本基线对齐；按钮内 图标 16px + 文字 gap 6px；表头图标 16px + 标题
+- **不用**：emoji、彩色填充图标、Material Icons、混用多套图标库
+
 ## Motion
 - **策略**：minimal-functional（只过渡辅助理解，不花哨）
 - **Easing**：enter ease-out / exit ease-in / move ease-in-out

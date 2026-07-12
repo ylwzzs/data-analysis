@@ -1,6 +1,7 @@
 import { ReactNode } from 'react';
 import Link from 'next/link';
 import { cookies } from 'next/headers';
+import { LayoutDashboard, Package, Store, Target, Users, Settings } from 'lucide-react';
 
 export default async function AdminLayout({
   children,
@@ -34,9 +35,9 @@ export default async function AdminLayout({
         {/* Sidebar */}
         <aside className="w-[200px] bg-white border-r min-h-[calc(100vh-57px)]">
           <nav className="p-4 space-y-2">
-            <NavItem href="/admin/dashboard" icon="📊">仪表盘</NavItem>
+            <NavItem href="/admin/dashboard" icon={<LayoutDashboard size={16} />}>仪表盘</NavItem>
             <div className="pt-2">
-              <NavItem href="/admin/sources" icon="📦">数据源</NavItem>
+              <NavItem href="/admin/sources" icon={<Package size={16} />}>数据源</NavItem>
               <div className="ml-6 mt-1 space-y-1">
                 <SubNavItem href="/admin/sources">配置</SubNavItem>
                 <SubNavItem href="/admin/sources/tasks">采集任务</SubNavItem>
@@ -44,14 +45,14 @@ export default async function AdminLayout({
               </div>
             </div>
             <div className="pt-2">
-              <NavItem href="/admin/branches" icon="🏠">门店维护</NavItem>
+              <NavItem href="/admin/branches" icon={<Store size={16} />}>门店维护</NavItem>
             </div>
             <div className="pt-2">
-              <NavItem href="/admin/targets" icon="🎯">目标管理</NavItem>
+              <NavItem href="/admin/targets" icon={<Target size={16} />}>目标管理</NavItem>
             </div>
             <div className="pt-4 border-t">
-              <NavItem href="#" icon="👥" disabled>用户管理</NavItem>
-              <NavItem href="#" icon="⚙️" disabled>系统设置</NavItem>
+              <NavItem href="#" icon={<Users size={16} />} disabled>用户管理</NavItem>
+              <NavItem href="#" icon={<Settings size={16} />} disabled>系统设置</NavItem>
             </div>
           </nav>
         </aside>
@@ -65,21 +66,21 @@ export default async function AdminLayout({
 
 function NavItem({ href, icon, children, disabled }: {
   href: string;
-  icon: string;
+  icon: ReactNode;
   children: ReactNode;
   disabled?: boolean;
 }) {
   if (disabled) {
     return (
       <span className="flex items-center gap-2 px-3 py-2 text-sm text-gray-400 cursor-not-allowed">
-        <span>{icon}</span>
+        {icon}
         {children}
       </span>
     );
   }
   return (
     <Link href={href} className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded">
-      <span>{icon}</span>
+      {icon}
       {children}
     </Link>
   );
