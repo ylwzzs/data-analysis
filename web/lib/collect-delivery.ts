@@ -131,7 +131,7 @@ async function callLemengApi(urlPath: string, authToken: string, bodyStr: string
       const response = await fetchWithTimeout(BASE_URL + urlPath, { method: 'POST', headers, body: bodyStr }, REQUEST_TIMEOUT);
       if (response.status === 200) {
         const data = await response.json();
-        if (data.code === -1 && attempt < maxRetries - 1) { await new Promise(r => setTimeout(r, 2000)); continue; }
+        if (String(data.code) === '-1' && attempt < maxRetries - 1) { await new Promise(r => setTimeout(r, 2000)); continue; }
         return { ok: true, data };
       }
       const errorText = await response.text();
@@ -186,8 +186,9 @@ export async function collectDeliveryOnce(
   const firstBody = buildBody(distributionBranch, dtFrom, dtTo, 0, limit, responseBranchNums);
   const firstRes = await callLemengApi(ENDPOINT_DETAIL, authToken, firstBody, branchNumsStr);
   if (!firstRes.ok) { result.error = firstRes.error || 'first page failed'; return result; }
-  if (firstRes.data?.code === -1) { result.error = `Token expired: ${firstRes.data?.message}`; return result; }
-  if (firstRes.data?.code !== 0) { result.error = `API code=${firstRes.data?.code} msg=${firstRes.data?.msg}`; return result; }
+  const code = String(firstRes.data?.code);   // 乐檬返 code 是字符串 "0"/"-1"
+  if (code === '-1') { result.error = `Token expired: ${firstRes.data?.message}`; return result; }
+  if (code !== '0') { result.error = `API code=${firstRes.data?.code} msg=${firstRes.data?.msg}`; return result; }
 
   const data = firstRes.data?.data || {};
   result.apiTotal = data.count || 0;
@@ -210,7 +211,7 @@ export async function collectDeliveryOnce(
   while (offset < result.apiTotal && pages < maxPages) {
     const bodyStr = buildBody(distributionBranch, dtFrom, dtTo, offset, limit, responseBranchNums);
     const pr = await callLemengApi(ENDPOINT_DETAIL, authToken, bodyStr, branchNumsStr);
-    if (!pr.ok || pr.data?.code !== 0) {
+    if (!pr.ok || String(pr.data?.code) !== '0') {
       console.error(`[collect-delivery] offset ${offset} error: ${pr.error || pr.data?.msg}`);
       consecutiveErrors++;
       if (consecutiveErrors >= 3) { result.error = `Consecutive 3 pages failed at offset ${offset}`; break; }
