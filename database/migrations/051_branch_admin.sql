@@ -59,7 +59,8 @@ BEGIN
 END $$;
 
 -- ===== 5. get_unmapped_regions：dim_branch 里有但 dim_region 没映射的 region_name =====
-CREATE OR REPLACE FUNCTION get_unmapped_regions() RETURNS TABLE(region_name TEXT, branch_count BIGINT)
+DROP FUNCTION IF EXISTS get_unmapped_regions();
+CREATE FUNCTION get_unmapped_regions() RETURNS TABLE(region_name TEXT, branch_count BIGINT)
 LANGUAGE plpgsql SECURITY DEFINER AS $$
 BEGIN
   RETURN QUERY

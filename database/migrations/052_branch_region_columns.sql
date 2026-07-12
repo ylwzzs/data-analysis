@@ -32,7 +32,8 @@ ALTER VIEW branch_admin_v SET (security_invoker = true);
 GRANT SELECT ON branch_admin_v TO authenticated, anon;
 
 -- ===== 3. get_unmapped_regions 重定义：无战区(first_level_region 空)的门店 =====
-CREATE OR REPLACE FUNCTION get_unmapped_regions() RETURNS TABLE(system_book_code TEXT, branch_num TEXT, branch_name TEXT, region_name TEXT)
+DROP FUNCTION IF EXISTS get_unmapped_regions();
+CREATE FUNCTION get_unmapped_regions() RETURNS TABLE(system_book_code TEXT, branch_num TEXT, branch_name TEXT, region_name TEXT)
 LANGUAGE plpgsql SECURITY DEFINER AS $$
 BEGIN
   RETURN QUERY
@@ -41,5 +42,6 @@ BEGIN
     WHERE b.is_active = true AND b.first_level_region IS NULL
     ORDER BY b.system_book_code, b.branch_num;
 END $$;
+GRANT EXECUTE ON FUNCTION get_unmapped_regions() TO authenticated, anon;
 
 DO $$ BEGIN RAISE NOTICE 'Migration 052 completed: dim_branch +first/second_level_region, branch_admin_v 去 dim_region, get_unmapped_regions 改查无战区门店'; END $$;
