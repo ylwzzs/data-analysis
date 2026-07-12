@@ -72,7 +72,7 @@ GRANT SELECT ON report_achievement_v TO authenticated, anon;
 
 -- ===== 5. upsert_target_total：DROP旧签名(7参)+CREATE新签名(8参,加 p_target_type)=====
 DROP FUNCTION IF EXISTS upsert_target_total(BIGINT,TEXT,TEXT,DATE,DATE,JSONB,TEXT);
-CREATE FUNCTION upsert_target_total(
+CREATE OR REPLACE FUNCTION upsert_target_total(
   p_id BIGINT, p_name TEXT, p_sbc TEXT, p_start DATE, p_end DATE, p_metrics JSONB, p_target_type TEXT, p_by TEXT
 ) RETURNS JSONB
 LANGUAGE plpgsql SECURITY DEFINER AS $$
