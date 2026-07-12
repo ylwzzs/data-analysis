@@ -16,18 +16,14 @@ export async function GET() {
   return NextResponse.json({ data });
 }
 
-// POST: 新建/更新目标 + 指标值
+// POST: 建总目标（多指标，branch_num=ALL）
 export async function POST(req: NextRequest) {
   const b = await req.json();
-  if (!b?.metrics?.length) return NextResponse.json({ ok: false, error: 'missing metrics' }, { status: 400 });
-  const r = await fetch(`${POSTGREST_URL}/rpc/upsert_target_admin`, {
+  if (!b?.metrics?.length || !b.name || !b.start_date || !b.end_date) return NextResponse.json({ ok: false, error: '缺字段' }, { status: 400 });
+  const r = await fetch(`${POSTGREST_URL}/rpc/upsert_target_total`, {
     method: 'POST', headers,
-    body: JSON.stringify({
-      p_name: b.name, p_sbc: b.system_book_code, p_branch: b.branch_num,
-      p_start: b.start_date, p_end: b.end_date,
-      p_metrics: b.metrics, p_created_by: b.created_by || 'admin',
-    }),
+    body: JSON.stringify({ p_id: b.id ?? null, p_name: b.name, p_sbc: b.system_book_code || '3120', p_start: b.start_date, p_end: b.end_date, p_metrics: b.metrics, p_by: b.created_by || 'admin' }),
   });
-  const data = await r.json().catch(() => ({ ok: false, error: 'rpc failed' }));
-  return NextResponse.json(data, { status: data?.ok ? 200 : 400 });
+  const d = await r.json().catch(() => ({ ok: false }));
+  return NextResponse.json(d, { status: d?.ok ? 200 : 400 });
 }
