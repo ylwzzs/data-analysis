@@ -21,6 +21,8 @@ export default function BreakdownPage() {
   // 按 branch_num 改某指标值
   const setCell = (branch_num: string, m: string, v: string) => setRows(rs => rs.map(r => r.branch_num === branch_num ? { ...r, metrics: { ...r.metrics, [m]: v } } : r));
   const save = async () => {
+    const diffs = metrics.filter(m => (Number(balance[m]?.total) || 0) - sumOf(m) !== 0);
+    if (diffs.length && !confirm(`有 ${diffs.length} 个指标分解与总目标有差额，确认保存？`)) return;
     const payload = rows.map(r => ({ branch_num: r.branch_num, metrics: Object.fromEntries(metrics.map(m => [m, Number(r.metrics?.[m] || 0)])) }));
     const r = await fetch('/api/admin/targets/breakdown', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ parent_id: Number(id), sbc: '3120', rows: payload }) });
     const j = await r.json();
@@ -71,13 +73,6 @@ export default function BreakdownPage() {
             </tr>
           ))}
         </tbody>
-        <tfoot><tr className="bg-green-50 font-bold sticky bottom-0">
-          <td className="border p-2 text-center" colSpan={4}>汇总校验（子和 vs 总目标）</td>
-          {metrics.map(m => {
-            const tot = Number(balance[m]?.total) || 0; const s = sumOf(m); const diff = tot - s;
-            return <td key={m} className="border p-2">Σ {s} / {tot} <span className={diff === 0 ? 'text-green-600' : 'text-red-600'}>{diff === 0 ? '✅平衡' : `差${diff.toFixed(1)}`}</span></td>;
-          })}
-        </tr></tfoot>
       </table>
     </div>
   );
