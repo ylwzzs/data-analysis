@@ -64,7 +64,7 @@ INSERT INTO report_definitions (report_type, name, target_table, source_pattern,
    CAST(SUM(CAST(out_money AS DECIMAL(14,2))) AS DECIMAL(14,2)) AS out_money,
    CAST(SUM(CAST(profit_money AS DECIMAL(14,2))) AS DECIMAL(14,2)) AS profit_money
  FROM read_parquet('{{source_pattern}}', filename=true) d
- LEFT JOIN dim_item di ON di.system_book_code=regexp_extract(d.filename, 'transfer_detail/([0-9]+)/', 1) AND di.item_num=d.item_num
+ LEFT JOIN read_parquet('s3://lemeng-datasource/dims/dim_item.parquet') di ON di.system_book_code=regexp_extract(d.filename, 'transfer_detail/([0-9]+)/', 1) AND di.item_num=d.item_num
  WHERE substr(order_time,1,4)||substr(order_time,6,2)||substr(order_time,9,2) BETWEEN '{{date_from_compact}}' AND '{{date_to_compact}}'
  GROUP BY 1,2,3,4
  ORDER BY 1,2,3,4
@@ -86,7 +86,7 @@ INSERT INTO report_definitions (report_type, name, target_table, source_pattern,
    CAST(SUM(CAST(wholesale_money AS DECIMAL(14,2))) AS DECIMAL(14,2)) AS wholesale_money,
    CAST(SUM(CAST(wholesale_profit AS DECIMAL(14,2))) AS DECIMAL(14,2)) AS wholesale_profit
  FROM read_parquet('{{source_pattern}}', filename=true) d
- LEFT JOIN dim_item di ON di.system_book_code=regexp_extract(d.filename, 'wholesale_detail/([0-9]+)/', 1) AND di.item_num=d.item_num
+ LEFT JOIN read_parquet('s3://lemeng-datasource/dims/dim_item.parquet') di ON di.system_book_code=regexp_extract(d.filename, 'wholesale_detail/([0-9]+)/', 1) AND di.item_num=d.item_num
  WHERE substr(audit_time,1,4)||substr(audit_time,6,2)||substr(audit_time,9,2) BETWEEN '{{date_from_compact}}' AND '{{date_to_compact}}'
  GROUP BY 1,2,3,4
  ORDER BY 1,2,3,4
