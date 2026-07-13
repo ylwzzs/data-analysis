@@ -7,7 +7,7 @@ INSERT INTO collect_tasks (id, name, source_id, function_slug, schedule_cron, pa
  ('a0000000-0000-0000-0000-000000000011'::uuid, '乐檬-3120-批发销售明细采集',
   'a0000000-0000-0000-0000-000000000001'::uuid,   -- source = 3120
   'collect-wholesale',
-  '*/5 8-23 * * *',                               -- 同 retail/delivery（当天增量+每小时全量）
+  '2-59/5 8-23 * * *',                            -- 错开零售0/配送1分,避并发/transform串扰(server.js共享conn+temp_raw)
   '{"task_type":"wholesale","date_mode":"today","page_size":200}'::jsonb,
   true)
 ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, params=EXCLUDED.params, enabled=true;

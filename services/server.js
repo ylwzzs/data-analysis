@@ -161,6 +161,7 @@ app.post("/transform", async (req, res) => {
   const reqKey = req.headers["x-agent-key"] || (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
   if (!AGENT_API_KEY || reqKey !== AGENT_API_KEY) return res.status(401).json({ error: "Unauthorized" });
   const startTime = Date.now();
+  let c = null;
   try {
     const { records, config } = req.body;
 
@@ -170,6 +171,11 @@ app.post("/transform", async (req, res) => {
     if (!config || !config.date) {
       return res.status(400).json({ error: "Missing config.date" });
     }
+
+    // 每请求独立连接 + 局部 runQuery 绑定（隔离并发 /transform 的 temp_raw/deduped，仿 /query；新连接需重配 S3）
+    c = db.connect();
+    await configureS3(c);
+    const runQuery = (sql) => runQueryOn(c, sql);
 
     const {
       date,
@@ -191,7 +197,7 @@ app.post("/transform", async (req, res) => {
 
     // 创建临时表（全部 VARCHAR）
     const columnsDef = schema.map(c => `"${c.name}" VARCHAR`).join(', ');
-    await runQuery(`CREATE OR REPLACE TABLE temp_raw (${columnsDef})`);
+    await runQuery(`CREATE OR REPLACE TEMP TABLE temp_raw (${columnsDef})`);
 
     // 批量插入
     const batchSize = 1000;
@@ -219,13 +225,13 @@ app.post("/transform", async (req, res) => {
     if (dedupe_key.length > 0) {
       const keyCols = dedupe_key.join(', ');
       await runQuery(`
-        CREATE OR REPLACE TABLE deduped AS
+        CREATE OR REPLACE TEMP TABLE deduped AS
         SELECT DISTINCT ON (${keyCols}) *
         FROM temp_raw
         ORDER BY ${keyCols}
       `);
     } else {
-      await runQuery("CREATE OR REPLACE TABLE deduped AS SELECT * FROM temp_raw");
+      await runQuery("CREATE OR REPLACE TEMP TABLE deduped AS SELECT * FROM temp_raw");
     }
 
     const dedupedResult = await runQuery("SELECT CAST(COUNT(*) AS INTEGER) as cnt FROM deduped");
@@ -286,11 +292,9 @@ app.post("/transform", async (req, res) => {
 
   } catch (err) {
     console.error("[transform] Error:", err.message);
-    try {
-      await runQuery("DROP TABLE IF EXISTS temp_raw");
-      await runQuery("DROP TABLE IF EXISTS deduped");
-    } catch {}
     res.status(500).json({ error: err.message });
+  } finally {
+    if (c) try { c.close(); } catch {}
   }
 });
 
@@ -302,6 +306,7 @@ app.post("/merge", async (req, res) => {
   const reqKey = req.headers["x-agent-key"] || (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
   if (!AGENT_API_KEY || reqKey !== AGENT_API_KEY) return res.status(401).json({ error: "Unauthorized" });
   const startTime = Date.now();
+  let c = null;
   try {
     const { records, config } = req.body;
     if (!records || !Array.isArray(records) || records.length === 0) {
@@ -310,6 +315,11 @@ app.post("/merge", async (req, res) => {
     if (!config || !config.date) {
       return res.status(400).json({ error: "Missing config.date" });
     }
+
+    // 每请求独立连接 + 局部 runQuery 绑定（隔离并发 /merge 的 temp_raw/old_data/combined/deduped，仿 /query）
+    c = db.connect();
+    await configureS3(c);
+    const runQuery = (sql) => runQueryOn(c, sql);
 
     const {
       date,
@@ -328,7 +338,7 @@ app.post("/merge", async (req, res) => {
     // 1. 新记录入临时表（全 VARCHAR，与 /transform 一致）
     const newCols = Object.keys(records[0]);
     const columnsDef = newCols.map(c => `"${c}" VARCHAR`).join(', ');
-    await runQuery(`CREATE OR REPLACE TABLE temp_raw (${columnsDef})`);
+    await runQuery(`CREATE OR REPLACE TEMP TABLE temp_raw (${columnsDef})`);
     const batchSize = 1000;
     for (let i = 0; i < records.length; i += batchSize) {
       const batch = records.slice(i, i + batchSize);
@@ -364,26 +374,26 @@ app.post("/merge", async (req, res) => {
     // 4. 合并：两侧列取并集，缺失列填 NULL（全 VARCHAR）；保证列名对齐鲁棒
     let combinedCount = totalRecords;
     if (hasExisting) {
-      await runQuery(`CREATE OR REPLACE TABLE old_data AS SELECT * FROM read_parquet('${allS3Path}')`);
+      await runQuery(`CREATE OR REPLACE TEMP TABLE old_data AS SELECT * FROM read_parquet('${allS3Path}')`);
       const desc = await runQuery("DESCRIBE old_data");
       existingCols = desc.map(c => c.column_name).filter(Boolean);
       const allCols = Array.from(new Set([...existingCols, ...newCols])).sort();
       const selectList = (avail) => allCols
         .map(c => avail.includes(c) ? `"${c}"` : `CAST(NULL AS VARCHAR) AS "${c}"`)
         .join(', ');
-      await runQuery(`CREATE OR REPLACE TABLE combined AS SELECT ${selectList(existingCols)} FROM old_data UNION ALL SELECT ${selectList(newCols)} FROM temp_raw`);
+      await runQuery(`CREATE OR REPLACE TEMP TABLE combined AS SELECT ${selectList(existingCols)} FROM old_data UNION ALL SELECT ${selectList(newCols)} FROM temp_raw`);
       const c = await runQuery("SELECT CAST(COUNT(*) AS INTEGER) as cnt FROM combined");
       combinedCount = c[0]?.cnt || totalRecords;
     } else {
-      await runQuery("CREATE OR REPLACE TABLE combined AS SELECT * FROM temp_raw");
+      await runQuery("CREATE OR REPLACE TEMP TABLE combined AS SELECT * FROM temp_raw");
     }
 
     // 5. 去重（DISTINCT ON，重叠页/重复行自动合并）
     if (dedupe_key.length > 0) {
       const keyCols = dedupe_key.join(', ');
-      await runQuery(`CREATE OR REPLACE TABLE deduped AS SELECT DISTINCT ON (${keyCols}) * FROM combined ORDER BY ${keyCols}`);
+      await runQuery(`CREATE OR REPLACE TEMP TABLE deduped AS SELECT DISTINCT ON (${keyCols}) * FROM combined ORDER BY ${keyCols}`);
     } else {
-      await runQuery("CREATE OR REPLACE TABLE deduped AS SELECT * FROM combined");
+      await runQuery("CREATE OR REPLACE TEMP TABLE deduped AS SELECT * FROM combined");
     }
     const dedupedResult = await runQuery("SELECT CAST(COUNT(*) AS INTEGER) as cnt FROM deduped");
     const dedupedCount = dedupedResult[0]?.cnt || combinedCount;
@@ -428,13 +438,9 @@ app.post("/merge", async (req, res) => {
     });
   } catch (err) {
     console.error("[merge] Error:", err.message);
-    try {
-      await runQuery("DROP TABLE IF EXISTS temp_raw");
-      await runQuery("DROP TABLE IF EXISTS old_data");
-      await runQuery("DROP TABLE IF EXISTS combined");
-      await runQuery("DROP TABLE IF EXISTS deduped");
-    } catch {}
     res.status(500).json({ error: err.message });
+  } finally {
+    if (c) try { c.close(); } catch {}
   }
 });
 
