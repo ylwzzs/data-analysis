@@ -16,6 +16,7 @@ const STORE_METRICS = [
 
 export default function TargetsPage() {
   const [list, setList] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
   const [show, setShow] = useState(false);
   const load = async () => {
     const r = await fetch('/api/admin/targets'); const j = await r.json();
@@ -26,6 +27,7 @@ export default function TargetsPage() {
       map.get(r.target_id)!.metrics[r.metric_code] = { value: Number(r.target_value), rate: r.achievement_rate };
     }
     setList([...map.values()]);
+    setLoading(false);
   };
   useEffect(() => { load(); }, []);
 
@@ -41,7 +43,7 @@ export default function TargetsPage() {
           {['名称', '周期', '出库金额', '出库毛利', '销售', '配送', '状态', '操作'].map(h => <th key={h} className="border p-2 text-left">{h}</th>)}
         </tr></thead>
         <tbody>
-          {list.length === 0 && <tr><td colSpan={8} className="border p-2 text-gray-400 text-center">暂无目标</td></tr>}
+          {loading ? <tr><td colSpan={8} className="border p-2 text-gray-400 text-center">加载中…</td></tr> : list.length === 0 && <tr><td colSpan={8} className="border p-2 text-gray-400 text-center">暂无目标</td></tr>}
           {list.map(t => (
             <tr key={t.id}>
               <td className="border p-2">{t.name}</td>

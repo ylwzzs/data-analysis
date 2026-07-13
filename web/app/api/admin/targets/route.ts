@@ -7,13 +7,15 @@ const POSTGREST_URL = process.env.POSTGREST_URL || "http://postgrest:3000";
 const INSFORGE_API_KEY = process.env.INSFORGE_API_KEY!;
 const headers = { apikey: INSFORGE_API_KEY, Authorization: `Bearer ${INSFORGE_API_KEY}`, 'Content-Type': 'application/json' };
 
-// GET: 目标列表（全量，admin 视角）→ report_achievement_v 经 RPC
+// GET: 目标列表（admin 视角）→ report_achievement_v 经 RPC。
+// 列表只需 total 行；get_targets_admin 返全量含 breakdown(520行/329KB)，过滤 total 减传输，避免刷新闪"暂无目标"。
 export async function GET() {
   const r = await fetch(`${POSTGREST_URL}/rpc/get_targets_admin`, {
     method: 'POST', headers, body: '{}',
   });
   const data = await r.json().catch(() => []);
-  return NextResponse.json({ data });
+  const totals = (Array.isArray(data) ? data : []).filter((t: any) => t.target_level === 'total');
+  return NextResponse.json({ data: totals });
 }
 
 // POST: 建总目标（多指标，branch_num=ALL）
