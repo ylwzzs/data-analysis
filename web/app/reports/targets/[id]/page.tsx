@@ -1,0 +1,93 @@
+import { notFound } from "next/navigation";
+
+import { getDeviceType } from "@/lib/get-device-type";
+import { getClient } from "@/lib/api";
+import { getTargetKpi } from "@/lib/report-center/targets";
+import { getBreakdown, getTrend } from "@/lib/report-center/achievement";
+import { METRIC_ORDER } from "@/lib/report-center/metric-source";
+import { Header } from "@/components/layout/header";
+import { Sidebar } from "@/components/layout/sidebar";
+import { DesktopDashboard } from "./desktop";
+
+export const dynamic = "force-dynamic";
+
+// 看板页：取数 + 按设备分发。PC Header+Sidebar，移动 Header only（参照 reports/[id]/layout.tsx）。
+export default async function TargetDashboard({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  const { id } = await params;
+  const targetId = Number(id);
+  const isMobile = (await getDeviceType()) === "mobile";
+
+  const client = await getClient();
+  const { data: totalRows } = await client.database
+    .from("report_achievement_v")
+    .select("*")
+    .eq("target_id", targetId)
+    .eq("target_level", "total")
+    .limit(1);
+  if (!totalRows?.length) notFound();
+  const t = totalRows[0];
+
+  const [kpi, breakdownStore, breakdownHq] = await Promise.all([
+    getTargetKpi(targetId),
+    getBreakdown(targetId, "store"),
+    getBreakdown(targetId, "hq"),
+  ]);
+
+  // 每个指标的趋势（outbound 走 delivery+wholesale 双查合并，失败降级空数组）
+  const trend: Record<string, any> = {};
+  for (const code of METRIC_ORDER) {
+    const kr = kpi.find((k: any) => k.metric_code === code);
+    if (kr) {
+      try {
+        trend[code] = await getTrend({
+          system_book_code: t.system_book_code,
+          branch_num: t.branch_num,
+          category: t.category,
+          start_date: t.start_date,
+          end_date: t.end_date,
+          target_value: kr.target_value,
+          metric_code: code,
+        });
+      } catch {
+        trend[code] = [];
+      }
+    }
+  }
+
+  const dashboard = isMobile ? (
+    <div className="p-4">移动看板（Task 8）</div>
+  ) : (
+    <div className="mx-auto max-w-7xl p-6">
+      <DesktopDashboard
+        target={t}
+        kpi={kpi}
+        trend={trend}
+        breakdown={{ store: breakdownStore, hq: breakdownHq }}
+      />
+    </div>
+  );
+
+  // 外壳：PC Header + Sidebar，移动 Header only（不要丢 Header）
+  if (isMobile) {
+    return (
+      <div className="min-h-screen bg-gray-50">
+        <Header />
+        <main className="flex-1">{dashboard}</main>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <Header />
+      <div className="flex">
+        <Sidebar />
+        <main className="flex-1">{dashboard}</main>
+      </div>
+    </div>
+  );
+}
