@@ -1,33 +1,8 @@
-import { Header } from "@/components/layout/header";
-import { Sidebar } from "@/components/layout/sidebar";
-import { DesktopReportsList } from "@/components/reports/desktop-list";
-import { MobileReportsList } from "@/components/reports/mobile-list";
-import { getReports } from "@/lib/api";
-import { getDeviceType } from "@/lib/get-device-type";
+import { redirect } from "next/navigation";
 
-export default async function ReportsPage() {
-  const deviceType = await getDeviceType();
-  const isMobile = deviceType === "mobile";
-
-  const reports = await getReports();
-
-  return (
-    <div className="min-h-screen bg-gray-50">
-      <Header />
-      <div className="flex">
-        <Sidebar />
-        <main className="flex-1 p-6">
-          <div className="mb-6">
-            <h2 className="text-2xl font-bold">报表中心</h2>
-            <p className="text-muted-foreground">查看所有可访问的报表</p>
-          </div>
-          {isMobile ? (
-            <MobileReportsList reports={reports} />
-          ) : (
-            <DesktopReportsList reports={reports} />
-          )}
-        </main>
-      </div>
-    </div>
-  );
+// 旧假报表列表（读 reports 种子表）已废弃。
+// 报表中心首页 / 已改为目标列表（读 report_achievement_v）。
+// 保留此文件仅作旧书签兼容，统一重定向到首页。
+export default function ReportsPage() {
+  redirect("/");
 }

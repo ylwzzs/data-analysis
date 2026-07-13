@@ -1,3 +1,6 @@
+-- ⚠️ DEPRECATED 2026-07-13: 假报表种子。报表中心已改读 targets/report_achievement_v。
+-- 列表页不再读 reports 表，此种子仅历史保留。新看板见 /reports/targets/[id]。
+--
 -- 002_seed.sql
 -- 业务表 anon 访问权限 + 字段扩展 + 种子数据
 -- 前端通过 anon_key 经 PostgREST 匿名读取，需 GRANT 给 anon role。
