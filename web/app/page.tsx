@@ -1,20 +1,55 @@
-import { getReports } from "@/lib/api";
 import { getDeviceType } from "@/lib/get-device-type";
-import { DesktopHomePage } from "@/components/layout/desktop-home";
-import { MobileHomePage } from "@/components/layout/mobile-home";
+import { getTargetList } from "@/lib/report-center/targets";
+import { Header } from "@/components/layout/header";
+import { Sidebar } from "@/components/layout/sidebar";
+import { TargetList } from "@/components/report-center/target-list";
 
 /**
- * 首页：响应式布局
- * 根据设备类型渲染 PC 或移动布局
- * 设备类型由 middleware 检测并写入 cookie
+ * 首页：报表中心 · 目标列表
+ * 读 report_achievement_v total 行，渲染「进行中」「已结束」两段目标卡。
+ * 点目标进 /reports/targets/[id] 看板。PC/移动共用 TargetList（响应式 grid）。
  */
 export default async function HomePage() {
-  const deviceType = await getDeviceType();
-  const reports = await getReports();
+  const [deviceType, activeTargets, closedTargets] = await Promise.all([
+    getDeviceType(),
+    getTargetList("active"),
+    getTargetList("closed"),
+  ]);
+  const isMobile = deviceType === "mobile";
 
-  return deviceType === "mobile" ? (
-    <MobileHomePage reports={reports} />
-  ) : (
-    <DesktopHomePage reports={reports} />
+  const content = (
+    <>
+      <h1 className="mb-4 text-xl font-semibold text-slate-800">
+        报表中心 · 进行中目标
+      </h1>
+      <TargetList targets={activeTargets} />
+      {closedTargets.length > 0 && (
+        <>
+          <h2 className="mb-3 mt-8 text-sm font-medium text-slate-500">
+            已结束
+          </h2>
+          <TargetList targets={closedTargets} />
+        </>
+      )}
+    </>
+  );
+
+  if (isMobile) {
+    return (
+      <div className="min-h-screen bg-slate-50">
+        <Header />
+        <main className="mx-auto max-w-5xl p-4">{content}</main>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-50">
+      <Header />
+      <div className="flex">
+        <Sidebar />
+        <main className="mx-auto max-w-5xl flex-1 p-6">{content}</main>
+      </div>
+    </div>
   );
 }
