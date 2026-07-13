@@ -64,6 +64,7 @@ export default function TargetsPage() {
 // 新建目标：一个 form 两板块——总部(品类2×2) + 门店(销售总/配送总)
 function TargetForm({ onSaved, onClose }: { onSaved: () => void; onClose: () => void }) {
   const [name, setName] = useState('');
+  const [brand, setBrand] = useState('ALL');
   const [start, setStart] = useState('');
   const [end, setEnd] = useState('');
   const [grid, setGrid] = useState<Record<string, Record<string, string>>>(
@@ -85,7 +86,7 @@ function TargetForm({ onSaved, onClose }: { onSaved: () => void; onClose: () => 
       ...HQ_METRICS.map(m => ({ metric_code: m.code, target_value: catSum(m.code) })),
       ...STORE_METRICS.map(m => ({ metric_code: m.code, target_value: Number(storeVals[m.code]) || 0 })),
     ];
-    const r1 = await fetch('/api/admin/targets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, start_date: start, end_date: end, target_type: 'store', metrics: totalMetrics }) });
+    const r1 = await fetch('/api/admin/targets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, system_book_code: brand, start_date: start, end_date: end, target_type: 'store', metrics: totalMetrics }) });
     const j1 = await r1.json();
     if (!j1.ok) { setBusy(false); setErr(j1.error || '建总目标失败'); return; }
     const rows = HQ_CATEGORIES.map(c => ({ category: c, metrics: Object.fromEntries(HQ_METRICS.map(m => [m.code, Number(grid[c][m.code]) || 0])) }));
@@ -102,8 +103,9 @@ function TargetForm({ onSaved, onClose }: { onSaved: () => void; onClose: () => 
           <h2 className="font-bold text-lg">新建目标</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
         </div>
-        <div className="grid grid-cols-3 gap-4 mb-4">
+        <div className="grid grid-cols-4 gap-4 mb-4">
           <div className="col-span-1"><label className="text-xs text-gray-500">目标名称</label><input value={name} onChange={e => setName(e.target.value)} placeholder="7月经营目标" className="border rounded-md w-full px-2 py-1 text-sm" /></div>
+          <div><label className="text-xs text-gray-500">汇总范围</label><select value={brand} onChange={e => setBrand(e.target.value)} className="border rounded-md w-full px-2 py-1 text-sm bg-white"><option value="ALL">全公司(3120+64188)</option><option value="3120">仅 3120</option><option value="64188">仅 64188</option></select></div>
           <div><label className="text-xs text-gray-500">开始日期</label><input type="date" value={start} onChange={e => setStart(e.target.value)} className="border rounded-md w-full px-2 py-1 text-sm" /></div>
           <div><label className="text-xs text-gray-500">结束日期</label><input type="date" value={end} onChange={e => setEnd(e.target.value)} className="border rounded-md w-full px-2 py-1 text-sm" /></div>
         </div>
