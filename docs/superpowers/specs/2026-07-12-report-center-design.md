@@ -3,6 +3,18 @@
 > 日期：2026-07-12 ｜ 子系统：前端呈现 MVP（C 方向：报表+目标中心）
 > brainstorming 产物，下一步转 writing-plans 出实现计划
 
+---
+
+> ## 2026-07-13 修订（数据层 + 目标模型对齐）
+>
+> 原 spec 写于目标两类模型(057)与出库达成底座(058)**之前**，把"单指标销售看板"当唯一示例。现两者已上线，关键事实更新：
+> - **目标两类**：`store`（门店目标，销售/配送，拆门店）+ `hq`（总部目标，出库金额/毛利，按品类水果/标品耗材，不拆门店）。一个 total 目标含多指标 + 挂门店/品类 breakdown。
+> - **达成 4 指标全可算**：`report_achievement_v`(058) 支持 sale/delivery/outbound_amt/outbound_profit + active/closed 两态 + achievement_rate/progress_rate。
+> - **真实数据已通**：销售 2598 行/188 店/到 7-13；配送 2103 行/3 品类组；批发 28 行。实测「7月经营指标」(id 22, 13天/31天) 销售达成24%/进度58%、出库金额达成44%/进度106%（超额）。
+> - **门店级数据走 breakdown 行**：256 门店 breakdown 目标的 `report_achievement_v` 行天然是门店级达成，**交叉表/排行直接读视图，不需前端再聚合 report_daily_***。只有"按日累计趋势"需 report_daily_*。
+>
+> **本次实现范围（用户 2026-07-13 确认）**：多指标总览看板 + PC/移动双端全做。下文第四/五/七章已据此修订。
+
 ## 一、背景与现状
 
 前端现状（已 Explore 证实）：**管理后台为主体，数据消费空白**。
@@ -19,7 +31,7 @@
 
 **MVP 做**：
 1. 报表中心骨架：`/` = 目标列表（默认进行中 active，可切 closed）→ 点目标 → 达成看板
-2. **第一版报表：销售目标达成看板**（数据最现成：`report_achievement_v` + `report_daily_sales/category`），跑通全流程
+2. **第一版报表：多指标总览达成看板**（点一个 total 目标 → 该目标全指标达成：销售/配送/出库金额/出库毛利 KPI + 趋势 + 门店/品类排行 + 交叉表）。4 指标数据全通，一次覆盖 store/hq 两类目标
 3. PC 丰富看板（KPI / 趋势 / 排行 / 类 Excel 交叉表 / 下钻联动 / 每组件下载分享）
 4. 移动卡片流（7 张信息卡 / 维度切换器 / 生成分享图）
 5. 导出（Excel/图片/PDF，PC）+ 分享图（移动）
@@ -46,30 +58,33 @@
 
 **目标驱动**（A 方案，已确认）：目标是入口，看板是目标的视图。区分 active（实时算 actual）/ closed（读 snapshot 固化值），对应 D 子系统 `report_achievement_v` 三态。
 
-## 四、PC 目标达成看板（销售目标示例）
+## 四、PC 目标达成看板（多指标总览）
+
+点一个 total 目标（如「7月经营指标」）进入。一个目标含多指标 + 挂门店/品类 breakdown，看板按 target_type 分派布局（store 走门店维度、hq 走品类维度，组件复用）。
 
 布局（自上而下）：
-1. **目标头部**：目标名 + 状态徽章（进行中/已结束）+ 周期 + 指标类型 + 「切换目标 ▾」
-2. **KPI 大数字行**（5 个）：目标值 / 实际值 / 达成率 / 进度率（时间加权）/ 日均还需；色标（跑赢绿/落后红）；点数字下钻明细
-3. **趋势 + 排行**（2:1）：
-   - 累计达成趋势折线（实际累计 vs 目标线 vs 进度线，缺口阴影）
-   - 战区达成排行（横向柱，未达标红）
-4. **类 Excel 交叉表**：默认 战区 × 品类 销售达成；**维度切换**（战区/门店/品类/商品 任选两维交叉）；点单元格下钻明细；合计列 + 达成率列
+1. **目标头部**：目标名 + 状态徽章（进行中 active / 已结束 closed）+ 周期 + 目标类型（门店/总部）+ 「切换目标 ▾」（返回列表）
+2. **指标 KPI 卡行**（store 4 卡 / hq 2 卡）：销售 / 配送 / 出库金额 / 出库毛利。每卡：目标值 / 实际值 / **达成率大数字**（色标：超额绿 ≥100%、接近黄 80–100%、落后红 <80%，按进度率判）/ 进度率（时间加权）/ 数据状态徽章（complete/partial/missing）。**点卡片 = 设为"聚焦指标"**，驱动下方趋势+排行。
+3. **趋势 + 排行**（2:1，随聚焦指标切换）：
+   - 累计达成趋势折线（聚焦指标按日累计 actual vs 目标线 vs 进度线，缺口阴影；sale 读 report_daily_sales、delivery 读 report_daily_delivery、outbound 读 delivery+wholesale 按日累计）
+   - 门店达成排行（store）/ 品类达成排行（hq）：横向柱，未达标红，Top/Bottom 双向
+4. **类 Excel 交叉表**：**门店 × 指标**（store，行=门店或战区聚合，列=4 指标达成率+合计）/ **品类 × 指标**（hq，行=水果/标品耗材）。数据直接读 `report_achievement_v` 的 breakdown 行（门店级天然在视图里，不前端聚合）；合计列 + 达成率列 + 色阶；点单元格下钻明细（**第一版后置**）
 5. **每组件操作**：每个图表/交叉表右上角 `⬇Excel · 🖼图片 · 🔗分享`（组件级，非全页）
-6. **明细下钻区**：点 KPI/排行/交叉表单元格 → 展开对应明细（retail_detail 行）
 
 页级操作：`⬇导出全部（Excel/PDF）`。
 
+**明细下钻**（第一版后置，YAGNI）：点交叉表单元格 → 该店/品类该指标的明细行（sale→retail_detail / delivery→transfer_detail / wholesale→wholesale_detail，走 duckdb）。交叉表+排行已覆盖"谁达标谁落后"，明细第二版接。
+
 ## 五、移动目标达成看板（企微内）
 
-纵向卡片流（关键卡置顶，下滑看更多，每卡 ⋯ 可单独生成分享图）：
-1. 环形达成率 + 实际/目标/日均还需
-2. 趋势迷你折线（实际 vs 目标 vs 进度）
-3. 战区排行（红绿预警）
-4. 品类结构（堆叠条）
-5. 商品 Top5
-6. 门店达成分布（达标/接近/落后）
-7. 期末预测（按当前进度推算）
+纵向卡片流（关键卡置顶，下滑看更多，每卡 ⋯ 可单独生成分享图）。顶部 **指标切换器**（销售/配送/出库金额/出库毛利 tab 横滑）代替 PC 多图联动，切指标后卡 1-3 随之变：
+1. 环形达成率 + 实际/目标/日均还需（当前指标）
+2. 趋势迷你折线（当前指标 实际 vs 目标 vs 进度）
+3. 战区/品类排行（当前指标，红绿预警）
+4. 门店达成分布（达标/接近/落后，当前指标）—— store 目标
+5. 品类结构（堆叠条，水果 vs 标品耗材）—— hq 目标 / sale 指标
+6. 商品 Top5 —— **仅 sale 指标**（report_daily_category 有品类维；delivery/wholesale 是品类组级别无单品，后置）
+7. 期末预测（按当前进度推算当前指标期末达成）
 
 **移动端设计要点**：
 - **维度切换器**（战区/品类/门店/商品 tab 横滑）代替 PC 多图联动
@@ -94,11 +109,20 @@
 
 | 看板内容 | 数据源 | 引擎 |
 |---|---|---|
-| 目标 + 达成率/进度 | `report_achievement_v`（active 实时 / closed snapshot） | pg（security_invoker 走 RLS） |
-| 销售汇总（趋势/排行/交叉表） | `report_daily_sales`（日门店）/ `report_daily_category`（日门店品类） | pg |
-| 周/月趋势 | `report_weekly_trend` / 按日聚合 | pg |
-| 商品/门店维 | `dim_item` / `dim_branch` / `canonical_product` / `dim_region` | pg |
-| 明细下钻 | `retail_detail` / `delivery_detail` / `wholesale_detail`（parquet） | duckdb（read_parquet） |
+| 目标 total + 达成率/进度（KPI 卡） | `report_achievement_v` where target_level='total'（active 实时 / closed snapshot） | pg（security_invoker 走 RLS） |
+| 门店/品类级（排行、交叉表） | `report_achievement_v` where target_level='breakdown'（256 门店 / 2 品类天然在视图，**不前端聚合**） | pg |
+| 按日累计趋势 | 各指标对应日汇总表（见下映射） | pg |
+| 门店/战区维 | `dim_branch`（branch_name / first_level_region 战区） | pg |
+| 明细下钻（第一版后置） | `retail_detail` / `transfer_detail` / `wholesale_detail`（parquet） | duckdb |
+
+**指标 → 趋势数据源映射**（按聚焦指标选表）：
+
+| metric_code | 日汇总表 | 累计 actual 字段 |
+|---|---|---|
+| sale | report_daily_sales | total_sale（branch_num 聚合） |
+| delivery | report_daily_delivery | out_money（全品类） |
+| outbound_amt | report_daily_delivery + report_daily_wholesale | out_money + wholesale_money（品类组 in 水果/标品耗材） |
+| outbound_profit | 同上 | profit_money + wholesale_profit |
 
 **数据流**：前端组件 → `web/app/api/query/route.ts`（新建，代理）→ 按引擎分发：
 - pg 汇总表/视图 → PostgREST（带 JWT，走 RLS）
