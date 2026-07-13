@@ -8,6 +8,7 @@ import { METRIC_ORDER } from "@/lib/report-center/metric-source";
 import { Header } from "@/components/layout/header";
 import { Sidebar } from "@/components/layout/sidebar";
 import { DesktopDashboard } from "./desktop";
+import { MobileDashboard } from "./mobile";
 
 export const dynamic = "force-dynamic";
 
@@ -59,7 +60,12 @@ export default async function TargetDashboard({
   }
 
   const dashboard = isMobile ? (
-    <div className="p-4">移动看板（Task 8）</div>
+    <MobileDashboard
+      target={t}
+      kpi={kpi}
+      trend={trend}
+      breakdown={{ store: breakdownStore, hq: breakdownHq }}
+    />
   ) : (
     <div className="mx-auto max-w-7xl p-6">
       <DesktopDashboard
