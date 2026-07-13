@@ -5,9 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { LogoutButton } from "@/components/layout/logout-button";
 import { isWecomClient } from "@/lib/device";
-
-// 管理员白名单
-const ADMIN_USERIDS = new Set(["ZhangDuo", "YangWei"]);
+import { isAdmin } from "@/lib/auth";
 
 // Header（server component）：在受保护页渲染，此时一定已登录（middleware 已拦截未登录）。
 // 读 wecom_name / wecom_userid cookie（非 httpOnly）展示身份 + 退出按钮。
@@ -34,7 +32,7 @@ export async function Header() {
           <Badge variant="secondary">Beta</Badge>
         </div>
         <div className="flex items-center gap-4">
-          {userid && ADMIN_USERIDS.has(userid) && (
+          {isAdmin(userid) && (
             <Link href="/admin/dashboard" className="text-sm text-gray-600 hover:text-gray-900">
               管理后台
             </Link>

@@ -1,12 +1,6 @@
 import { NextResponse, NextRequest } from "next/server";
 import { isWecomClient, isMobileDevice } from "@/lib/device";
-
-// 管理员白名单（企微用户 ID）
-const ADMIN_USERIDS = new Set([
-  "ZhangDuo",      // 张铎
-  "YangWei",       // 杨玮
-  // 添加更多管理员...
-]);
+import { ADMIN_USERIDS } from "@/lib/auth";
 
 function buildWecomAuthUrl(redirectUri: string, state: string): string {
   const corpId = process.env.NEXT_PUBLIC_WECOM_CORP_ID;

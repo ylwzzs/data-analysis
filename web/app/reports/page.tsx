@@ -1,16 +1,13 @@
-import { headers } from "next/headers";
-
 import { Header } from "@/components/layout/header";
 import { Sidebar } from "@/components/layout/sidebar";
 import { DesktopReportsList } from "@/components/reports/desktop-list";
 import { MobileReportsList } from "@/components/reports/mobile-list";
 import { getReports } from "@/lib/api";
-import { isMobileDevice } from "@/lib/device";
+import { getDeviceType } from "@/lib/get-device-type";
 
 export default async function ReportsPage() {
-  const headersList = await headers();
-  const ua = headersList.get("user-agent") || "";
-  const isMobile = isMobileDevice(ua);
+  const deviceType = await getDeviceType();
+  const isMobile = deviceType === "mobile";
 
   const reports = await getReports();
 
