@@ -58,7 +58,7 @@ function formatTime(ts: string | null): string {
   return ts.replace("T", " ").substring(0, 16);
 }
 
-async function getClient() {
+export async function getClient() {
   const token = (await cookies()).get("insforge_access_token")?.value;
   // 用 access_token（authenticated JWT）当 anonKey 传：SDK 把 anonKey 作 Authorization Bearer，
   // PostgREST 据 JWT 的 role 切到 authenticated。token 缺失则回退 anon（已被 REVOKE SELECT，读不到）。
