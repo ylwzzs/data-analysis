@@ -6,6 +6,7 @@ import { ArrowLeft } from "lucide-react";
 
 import { METRICS, MetricCode } from "@/lib/report-center/metric-source";
 import { KpiCards } from "@/components/report-center/kpi-cards";
+import { CrossTable } from "@/components/report-center/cross-table";
 import { LineChart } from "@/components/charts/line-chart";
 import { RankChart } from "@/components/charts/rank-chart";
 
@@ -93,7 +94,8 @@ export function DesktopDashboard({
           <RankChart data={focusRank} />
         </div>
       </div>
-      {/* 交叉表 Task 7 填充 */}
+      {/* 门店 × 指标 交叉表：列动态（store breakdown 仅 sale/delivery） */}
+      <CrossTable rows={breakdown.store} />
     </div>
   );
 }
