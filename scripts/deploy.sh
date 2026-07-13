@@ -72,9 +72,12 @@ else
   echo "  ⚠ CTYUN_USERNAME/CTYUN_PASSWORD 未注入，跳过 push（仅本地 build）" >&2
 fi
 
-# 构建 DuckDB 服务镜像（用于 /compute 端点）
+# 构建 DuckDB 服务镜像（用于 /compute 端点）；base image 走 xuanyuan.run 偶发不可达时 pull ctyun latest 兜底，不阻断 web 部署
 echo "  · docker build $DUCKDB_IMAGE"
-docker build -t "$DUCKDB_IMAGE" "$ROOT/services"
+docker build -t "$DUCKDB_IMAGE" "$ROOT/services" 2>&1 || {
+  echo "  ⚠ DuckDB build 失败(可能 base image registry xuanyuan.run 不可达),改 pull ctyun latest"
+  docker pull "$DUCKDB_IMAGE" || echo "  ⚠ pull 也失败,保持现有 duckdb 容器镜像"
+}
 docker push "$DUCKDB_IMAGE" || echo "  ⚠ push DuckDB 镜像失败，使用本地镜像继续"
 
 # 服务器本地 build（base 镜像走 xuanyuan.run、npm 走 npmmirror，均国内链路）
