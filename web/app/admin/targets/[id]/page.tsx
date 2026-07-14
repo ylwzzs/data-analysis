@@ -44,7 +44,7 @@ export default function BreakdownPage() {
     const diffs = STORE_METRICS.filter(m => (Number(balance[m]?.total) || 0) - sumOf(m) !== 0);
     if (diffs.length && !confirm(`有 ${diffs.length} 个门店指标分解与总目标有差额，确认保存？`)) return;
     const payload = rows.map(r => ({ branch_num: r.branch_num, metrics: Object.fromEntries(STORE_METRICS.map(m => [m, Number(r.metrics?.[m] || 0)])) }));
-    const r = await fetch('/api/admin/targets/breakdown', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ parent_id: Number(id), sbc: '3120', rows: payload }) });
+    const r = await fetch('/api/admin/targets/breakdown', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ parent_id: Number(id), sbc: 'ALL', rows: payload }) });
     const j = await r.json();
     if (j.ok) { setSaved(true); setTimeout(() => setSaved(false), 2000); load(); } else alert('失败:' + JSON.stringify(j));
   };

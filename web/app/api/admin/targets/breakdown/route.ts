@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
   const url = isCategory ? `${POSTGREST_URL}/rpc/upsert_hq_category_breakdown` : `${POSTGREST_URL}/rpc/upsert_target_breakdown`;
   const body = isCategory
     ? JSON.stringify({ p_parent_id: Number(b.parent_id), p_rows: b.rows, p_by: 'admin' })
-    : JSON.stringify({ p_parent_id: Number(b.parent_id), p_sbc: b.sbc || '3120', p_rows: b.rows, p_by: 'admin' });
+    : JSON.stringify({ p_parent_id: Number(b.parent_id), p_sbc: b.sbc || 'ALL', p_rows: b.rows, p_by: 'admin' });
   const r = await fetch(url, { method: 'POST', headers, body });
   const d = await r.json().catch(() => ({ ok: false }));
   return NextResponse.json(d);
