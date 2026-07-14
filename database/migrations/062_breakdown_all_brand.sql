@@ -12,12 +12,12 @@ BEGIN
   SELECT system_book_code INTO v_sbc FROM targets WHERE id=p_parent_id;
   SELECT COALESCE(jsonb_agg(jsonb_build_object(
     'branch_num', b.branch_num, 'branch_name', b.branch_name,
-    'war_zone', b.first_level_region, 'group', e.custom_group,
+    'war_zone', b.first_level_region, 'region_l2', b.second_level_region, 'group', e.custom_group,
     'system_book_code', b.system_book_code,
     'metrics', COALESCE((SELECT jsonb_object_agg(mv.metric_code, mv.target_value)
       FROM target_metric_values mv JOIN targets s ON s.id=mv.target_id
       WHERE s.parent_target_id=p_parent_id AND s.branch_num=b.branch_num), '{}'::jsonb)
-  ) ORDER BY b.first_level_region, b.branch_num), '[]'::jsonb)
+  ) ORDER BY b.first_level_region, b.second_level_region, b.branch_num), '[]'::jsonb)
   INTO v_out
   FROM dim_branch b
   LEFT JOIN dim_branch_ext e ON e.system_book_code=b.system_book_code AND e.branch_num=b.branch_num
