@@ -29,11 +29,15 @@ export async function getTrend(target: {
 }): Promise<TrendPoint[]> {
   const meta = METRICS[target.metric_code];
   const client = await getClient();
-  // 主表按日聚合
-  const main = await fetchDailySum(client, meta.trendTable, meta.trendValueCol, target, meta.categoryIn);
+  // 主表按日聚合；outbound 双查并行（main+sec 合并）
+  const [main, sec] = meta.secondaryTable && meta.secondaryValueCol
+    ? await Promise.all([
+        fetchDailySum(client, meta.trendTable, meta.trendValueCol, target, meta.categoryIn),
+        fetchDailySum(client, meta.secondaryTable, meta.secondaryValueCol, target, meta.categoryIn),
+      ])
+    : [await fetchDailySum(client, meta.trendTable, meta.trendValueCol, target, meta.categoryIn), []];
   let merged = main;
-  if (meta.secondaryTable && meta.secondaryValueCol) {
-    const sec = await fetchDailySum(client, meta.secondaryTable, meta.secondaryValueCol, target, meta.categoryIn);
+  if (sec.length) {
     // 按日期合并（FULL JOIN 语义）
     const byDate = new Map<string, number>();
     for (const d of main) byDate.set(d.date, (byDate.get(d.date) ?? 0) + d.value);

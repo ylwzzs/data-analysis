@@ -38,26 +38,21 @@ export default async function TargetDashboard({
     getBreakdown(targetId, "hq"),
   ]);
 
-  // 每个指标的趋势（outbound 走 delivery+wholesale 双查合并，失败降级空数组）
-  const trend: Record<string, any> = {};
-  for (const code of METRIC_ORDER) {
+  // 每个指标的趋势并行（outbound 走 delivery+wholesale 双查合并，失败降级空数组）
+  const trendEntries = await Promise.all(METRIC_ORDER.map(async (code) => {
     const kr = kpi.find((k: any) => k.metric_code === code);
-    if (kr) {
-      try {
-        trend[code] = await getTrend({
-          system_book_code: t.system_book_code,
-          branch_num: t.branch_num,
-          category: t.category,
-          start_date: t.start_date,
-          end_date: t.end_date,
-          target_value: kr.target_value,
-          metric_code: code,
-        });
-      } catch {
-        trend[code] = [];
-      }
+    if (!kr) return [code, []] as const;
+    try {
+      const t2 = await getTrend({
+        system_book_code: t.system_book_code, branch_num: t.branch_num, category: t.category,
+        start_date: t.start_date, end_date: t.end_date, target_value: kr.target_value, metric_code: code,
+      });
+      return [code, t2] as const;
+    } catch {
+      return [code, []] as const;
     }
-  }
+  }));
+  const trend: Record<string, any> = Object.fromEntries(trendEntries);
 
   const dashboard = isMobile ? (
     <MobileDashboard
