@@ -81,21 +81,24 @@ export default function BreakdownPage() {
         <button onClick={saveHq} className="bg-primary text-white px-4 py-1 text-sm rounded-md inline-flex items-center gap-1.5 hover:bg-primary/90">保存品类分解</button>
         {saved && <span className="text-green-600 text-sm inline-flex items-center gap-1"><CheckCircle size={14} /> 已保存</span>}
       </div>
-      <table className="text-sm border-collapse tabular-nums mb-6">
+      <table className="text-sm border-collapse tabular-nums mb-6 w-full max-w-2xl">
         <thead><tr className="bg-gray-100">
           <th className="border p-2 text-left">品类</th>
-          {HQ_METRICS.map(m => <th key={m} className="border p-2 text-left w-40">{METRIC_NAME[m]}(元)</th>)}
+          {HQ_METRICS.map(m => <th key={m} className="border p-2 text-left">{METRIC_NAME[m]}(元)</th>)}
         </tr></thead>
         <tbody>
           {HQ_CATEGORIES.map(cat => (
             <tr key={cat}>
               <td className="border p-2">{cat}</td>
-              {HQ_METRICS.map(m => <td key={m} className="border p-2"><input type="number" value={hqGrid[cat]?.[m] ?? ''} onChange={e => setHq(cat, m, e.target.value)} className="border rounded-md px-2 py-1 w-36 text-sm text-right tabular-nums" /></td>)}
+              {HQ_METRICS.map(m => <td key={m} className="border p-2"><input type="number" value={hqGrid[cat]?.[m] ?? ''} onChange={e => setHq(cat, m, e.target.value)} className="border rounded-md px-2 py-1 w-full text-sm text-right tabular-nums" /></td>)}
             </tr>
           ))}
           <tr className="bg-gray-50 font-medium">
-            <td className="border p-2">合计 / 总目标</td>
-            {HQ_METRICS.map(m => <td key={m} className="border p-2 text-right">{hqSum(m).toLocaleString()} / {Number(balance[m]?.total || 0).toLocaleString()}</td>)}
+            <td className="border p-2">合计</td>
+            {HQ_METRICS.map(m => {
+              const sum = hqSum(m); const total = Number(balance[m]?.total || 0); const diff = sum - total;
+              return <td key={m} className={`border p-2 text-right tabular-nums ${diff===0 ? 'text-green-600' : 'text-red-600'}`}>{sum.toLocaleString()}{diff!==0 && <span className="text-xs ml-1">({diff>0?'+':''}{diff.toLocaleString()})</span>}</td>;
+            })}
           </tr>
         </tbody>
       </table>
