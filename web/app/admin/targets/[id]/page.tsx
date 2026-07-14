@@ -2,7 +2,7 @@
 // 分解页：一个目标两板块——总部品类分解(水果/标品 × 出库) + 门店分解(各店 × 销售/配送)
 'use client';
 import { useState, useEffect, useRef, Fragment } from 'react';
-import { ArrowLeft, Download, Upload, CheckCircle, ChevronDown, ChevronRight } from 'lucide-react';
+import { ArrowLeft, Download, Upload, CheckCircle } from 'lucide-react';
 import { useParams } from 'next/navigation';
 
 const HQ_METRICS = ['outbound_amt', 'outbound_profit'];
@@ -16,8 +16,6 @@ export default function BreakdownPage() {
   const [warZoneRows, setWarZoneRows] = useState<any[]>([]);
   const [regionRows, setRegionRows] = useState<any[]>([]);
   const [branchRows, setBranchRows] = useState<any[]>([]);
-  const [expandedWz, setExpandedWz] = useState<Set<string>>(new Set());
-  const [expandedR2, setExpandedR2] = useState<Set<string>>(new Set());
   const [balance, setBalance] = useState<any>({});
   const [saved, setSaved] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -43,8 +41,6 @@ export default function BreakdownPage() {
     setWarZoneRows(wzRows);
     setRegionRows(rgRows);
     setBranchRows(br);
-    setExpandedWz(new Set(wzs));
-    setExpandedR2(new Set());
   };
   useEffect(() => { load(); }, []);
 
@@ -62,8 +58,6 @@ export default function BreakdownPage() {
   const setWzCell = (wz: string, m: string, v: string) => setWarZoneRows(rs => rs.map(r => r.war_zone === wz ? { ...r, metrics: { ...r.metrics, [m]: v } } : r));
   const setR2Cell = (wz: string, r2: string, m: string, v: string) => setRegionRows(rs => rs.map(r => r.war_zone === wz && r.region_l2 === r2 ? { ...r, metrics: { ...r.metrics, [m]: v } } : r));
   const setStoreCell = (bn: string, m: string, v: string) => setBranchRows(rs => rs.map(r => r.branch_num === bn ? { ...r, metrics: { ...r.metrics, [m]: v } } : r));
-  const toggleWz = (wz: string) => setExpandedWz(s => { const n = new Set(s); if (n.has(wz)) n.delete(wz); else n.add(wz); return n; });
-  const toggleR2 = (key: string) => setExpandedR2(s => { const n = new Set(s); if (n.has(key)) n.delete(key); else n.add(key); return n; });
   // 子和校验: 战区=所辖区域和 / 区域=所辖门店和
   const wzRegionSum = (wz: string, m: string) => regionRows.filter(r => r.war_zone === wz).reduce((s, r) => s + (Number(r.metrics?.[m]) || 0), 0);
   const r2StoreSum = (wz: string, r2: string, m: string) => branchRows.filter(b => b.war_zone === wz && b.region_l2 === r2).reduce((s, b) => s + (Number(b.metrics?.[m]) || 0), 0);
@@ -152,70 +146,51 @@ export default function BreakdownPage() {
       </div>
       <table className="text-sm border-collapse tabular-nums w-full">
         <thead><tr className="bg-gray-100">
-          <th className="border p-2 text-left">战区 / 区域 / 门店</th>
-          {STORE_METRICS.map(m => <th key={m} className="border p-2 text-right w-44">{METRIC_NAME[m]}</th>)}
-          <th className="border p-2 text-right w-44">子和校验</th>
+          <th className="border p-2 text-left w-28">战区</th>
+          <th className="border p-2 text-left w-24">区域</th>
+          <th className="border p-2 text-left">门店</th>
+          {STORE_METRICS.map(m => <th key={m} className="border p-2 text-right w-56">{METRIC_NAME[m]}（目标 / 子和）</th>)}
         </tr></thead>
         <tbody>
           {warZoneRows.map(wz => {
-            const wzExpanded = expandedWz.has(wz.war_zone);
-            const regions = regionRows.filter(r => r.war_zone === wz.war_zone);
+            const wzRegions = regionRows.filter(r => r.war_zone === wz.war_zone);
+            const wzStores = branchRows.filter(b => b.war_zone === wz.war_zone);
+            const wzRowSpan = wzStores.length + wzRegions.length + 1;
+            const wzRegionSumAll = (m: string) => wzRegions.reduce((s, r) => s + (Number(r.metrics?.[m]) || 0), 0);
             return (
               <Fragment key={wz.war_zone}>
-                <tr className="bg-primary/10 font-medium">
-                  <td className="border p-2">
-                    <button onClick={() => toggleWz(wz.war_zone)} className="inline-flex items-center gap-1">
-                      {wzExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}{wz.war_zone}
-                    </button>
-                  </td>
-                  {STORE_METRICS.map(m => (
-                    <td key={m} className="border p-2"><input type="number" value={wz.metrics?.[m] ?? ''} onChange={e => setWzCell(wz.war_zone, m, e.target.value)} className="border rounded-md px-2 py-1 w-full text-sm text-right tabular-nums" /></td>
-                  ))}
-                  <td className="border p-2 text-right tabular-nums text-xs space-y-0.5">
-                    {STORE_METRICS.map(m => {
-                      const childSum = wzRegionSum(wz.war_zone, m);
-                      const parentVal = Number(wz.metrics?.[m]) || 0;
-                      const diff = childSum - parentVal;
-                      return <div key={m} className={diff === 0 ? 'text-green-600' : 'text-red-600'}>{METRIC_NAME[m].slice(0, 2)} {childSum.toLocaleString()}{diff !== 0 && <span className="ml-1">({diff > 0 ? '+' : ''}{diff.toLocaleString()})</span>}</div>;
-                    })}
-                  </td>
-                </tr>
-                {wzExpanded && regions.map(r2 => {
-                  const r2Key = `${wz.war_zone}|${r2.region_l2}`;
-                  const r2Expanded = expandedR2.has(r2Key);
-                  const stores = branchRows.filter(b => b.war_zone === wz.war_zone && b.region_l2 === r2.region_l2);
+                {wzRegions.map((r2, ri) => {
+                  const r2Stores = branchRows.filter(b => b.war_zone === wz.war_zone && b.region_l2 === r2.region_l2);
+                  const r2RowSpan = r2Stores.length + 1;
+                  const r2StoreSum = (m: string) => r2Stores.reduce((s, b) => s + (Number(b.metrics?.[m]) || 0), 0);
                   return (
-                    <Fragment key={r2Key}>
-                      <tr className="bg-slate-50">
-                        <td className="border p-2 pl-6">
-                          <button onClick={() => toggleR2(r2Key)} className="inline-flex items-center gap-1 text-gray-700">
-                            {r2Expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}{r2.region_l2 || '-'}
-                          </button>
-                        </td>
-                        {STORE_METRICS.map(m => (
-                          <td key={m} className="border p-2"><input type="number" value={r2.metrics?.[m] ?? ''} onChange={e => setR2Cell(wz.war_zone, r2.region_l2, m, e.target.value)} className="border rounded-md px-2 py-1 w-full text-sm text-right tabular-nums" /></td>
-                        ))}
-                        <td className="border p-2 text-right tabular-nums text-xs space-y-0.5">
-                          {STORE_METRICS.map(m => {
-                            const childSum = r2StoreSum(wz.war_zone, r2.region_l2, m);
-                            const parentVal = Number(r2.metrics?.[m]) || 0;
-                            const diff = childSum - parentVal;
-                            return <div key={m} className={diff === 0 ? 'text-green-600' : 'text-red-600'}>{METRIC_NAME[m].slice(0, 2)} {childSum.toLocaleString()}{diff !== 0 && <span className="ml-1">({diff > 0 ? '+' : ''}{diff.toLocaleString()})</span>}</div>;
-                          })}
-                        </td>
-                      </tr>
-                      {r2Expanded && stores.map(store => (
-                        <tr key={store.branch_num}>
-                          <td className="border p-2 pl-12 text-gray-700"><span className="text-xs text-gray-400 mr-2">{store.branch_num}</span>{store.branch_name}</td>
-                          {STORE_METRICS.map(m => (
-                            <td key={m} className="border p-2"><input type="number" value={store.metrics?.[m] ?? ''} onChange={e => setStoreCell(store.branch_num, m, e.target.value)} className="border rounded-md px-2 py-1 w-full text-sm text-right tabular-nums" /></td>
-                          ))}
-                          <td className="border p-2"></td>
+                    <Fragment key={`${wz.war_zone}|${r2.region_l2}`}>
+                      {r2Stores.map((store, si) => (
+                        <tr key={store.branch_num} className="hover:bg-slate-50">
+                          {ri === 0 && si === 0 && <td rowSpan={wzRowSpan} className="border p-2 bg-primary/10 align-top font-medium">{wz.war_zone}</td>}
+                          {si === 0 && <td rowSpan={r2RowSpan} className="border p-2 align-top text-slate-600">{r2.region_l2 || '-'}</td>}
+                          <td className="border p-2"><span className="text-xs text-slate-400 mr-2 tabular-nums">{store.branch_num}</span>{store.branch_name}</td>
+                          {STORE_METRICS.map(m => <td key={m} className="border p-2"><input type="number" value={store.metrics?.[m] ?? ''} onChange={e => setStoreCell(store.branch_num, m, e.target.value)} className="border rounded-md px-2 py-1 w-full text-sm text-right tabular-nums" /></td>)}
                         </tr>
                       ))}
+                      <tr className="bg-slate-50 font-medium">
+                        <td className="border p-2 text-slate-500 text-xs">小计</td>
+                        {STORE_METRICS.map(m => {
+                          const sum = r2StoreSum(m); const target = Number(r2.metrics?.[m]) || 0; const diff = sum - target;
+                          return <td key={m} className="border p-2"><div className="flex items-center gap-2"><input type="number" value={r2.metrics?.[m] ?? ''} onChange={e => setR2Cell(wz.war_zone, r2.region_l2, m, e.target.value)} className="border rounded-md px-2 py-1 w-32 text-sm text-right tabular-nums" /><span className={`text-xs tabular-nums ${diff === 0 ? 'text-green-600' : 'text-red-600'}`}>子和 {sum.toLocaleString()}{diff !== 0 && <span className="ml-1">({diff > 0 ? '+' : ''}{diff.toLocaleString()})</span>}</span></div></td>;
+                        })}
+                      </tr>
                     </Fragment>
                   );
                 })}
+                <tr className="bg-primary/5 font-medium">
+                  <td className="border p-2 text-primary text-xs">战区合计</td>
+                  <td className="border p-2"></td>
+                  {STORE_METRICS.map(m => {
+                    const sum = wzRegionSumAll(m); const target = Number(wz.metrics?.[m]) || 0; const diff = sum - target;
+                    return <td key={m} className="border p-2"><div className="flex items-center gap-2"><input type="number" value={wz.metrics?.[m] ?? ''} onChange={e => setWzCell(wz.war_zone, m, e.target.value)} className="border rounded-md px-2 py-1 w-32 text-sm text-right tabular-nums" /><span className={`text-xs tabular-nums ${diff === 0 ? 'text-green-600' : 'text-red-600'}`}>子和 {sum.toLocaleString()}{diff !== 0 && <span className="ml-1">({diff > 0 ? '+' : ''}{diff.toLocaleString()})</span>}</span></div></td>;
+                  })}
+                </tr>
               </Fragment>
             );
           })}
