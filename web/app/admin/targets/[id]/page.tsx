@@ -146,51 +146,52 @@ export default function BreakdownPage() {
       </div>
       <table className="text-sm border-collapse tabular-nums w-full">
         <thead><tr className="bg-gray-100">
-          <th className="border p-2 text-left w-28">战区</th>
-          <th className="border p-2 text-left w-24">区域</th>
+          <th className="border p-2 text-left w-44">战区（目标/子和）</th>
+          <th className="border p-2 text-left w-40">区域（目标/子和）</th>
           <th className="border p-2 text-left">门店</th>
-          {STORE_METRICS.map(m => <th key={m} className="border p-2 text-right w-56">{METRIC_NAME[m]}（目标 / 子和）</th>)}
+          {STORE_METRICS.map(m => <th key={m} className="border p-2 text-right w-40">{METRIC_NAME[m]}</th>)}
         </tr></thead>
         <tbody>
           {warZoneRows.map(wz => {
             const wzRegions = regionRows.filter(r => r.war_zone === wz.war_zone);
             const wzStores = branchRows.filter(b => b.war_zone === wz.war_zone);
-            const wzRowSpan = wzStores.length + wzRegions.length + 1;
+            const wzRowSpan = wzStores.length;
             const wzRegionSumAll = (m: string) => wzRegions.reduce((s, r) => s + (Number(r.metrics?.[m]) || 0), 0);
             return (
               <Fragment key={wz.war_zone}>
                 {wzRegions.map((r2, ri) => {
                   const r2Stores = branchRows.filter(b => b.war_zone === wz.war_zone && b.region_l2 === r2.region_l2);
-                  const r2RowSpan = r2Stores.length + 1;
+                  const r2RowSpan = r2Stores.length;
                   const r2StoreSum = (m: string) => r2Stores.reduce((s, b) => s + (Number(b.metrics?.[m]) || 0), 0);
                   return (
                     <Fragment key={`${wz.war_zone}|${r2.region_l2}`}>
                       {r2Stores.map((store, si) => (
                         <tr key={store.branch_num} className="hover:bg-slate-50">
-                          {ri === 0 && si === 0 && <td rowSpan={wzRowSpan} className="border p-2 bg-primary/10 align-top font-medium">{wz.war_zone}</td>}
-                          {si === 0 && <td rowSpan={r2RowSpan} className="border p-2 align-top text-slate-600">{r2.region_l2 || '-'}</td>}
+                          {ri === 0 && si === 0 && (
+                            <td rowSpan={wzRowSpan} className="border p-2 bg-primary/10 align-top">
+                              <div className="font-medium">{wz.war_zone}</div>
+                              {STORE_METRICS.map(m => {
+                                const sum = wzRegionSumAll(m); const target = Number(wz.metrics?.[m]) || 0; const diff = sum - target;
+                                return <div key={m} className="mt-1 flex items-center gap-1"><span className="text-xs text-slate-500 w-7">{METRIC_NAME[m].slice(0, 2)}</span><input type="number" value={wz.metrics?.[m] ?? ''} onChange={e => setWzCell(wz.war_zone, m, e.target.value)} className="border rounded-md px-1 py-0.5 w-20 text-xs text-right tabular-nums" /><span className={`text-[10px] tabular-nums ${diff === 0 ? 'text-green-600' : 'text-red-600'}`}>={sum.toLocaleString()}{diff !== 0 && `(${diff > 0 ? '+' : ''}${diff})`}</span></div>;
+                              })}
+                            </td>
+                          )}
+                          {si === 0 && (
+                            <td rowSpan={r2RowSpan} className="border p-2 align-top bg-slate-50">
+                              <div className="font-medium text-slate-700">{r2.region_l2 || '-'}</div>
+                              {STORE_METRICS.map(m => {
+                                const sum = r2StoreSum(m); const target = Number(r2.metrics?.[m]) || 0; const diff = sum - target;
+                                return <div key={m} className="mt-1 flex items-center gap-1"><span className="text-xs text-slate-500 w-7">{METRIC_NAME[m].slice(0, 2)}</span><input type="number" value={r2.metrics?.[m] ?? ''} onChange={e => setR2Cell(wz.war_zone, r2.region_l2, m, e.target.value)} className="border rounded-md px-1 py-0.5 w-16 text-xs text-right tabular-nums" /><span className={`text-[10px] tabular-nums ${diff === 0 ? 'text-green-600' : 'text-red-600'}`}>={sum.toLocaleString()}{diff !== 0 && `(${diff > 0 ? '+' : ''}${diff})`}</span></div>;
+                              })}
+                            </td>
+                          )}
                           <td className="border p-2"><span className="text-xs text-slate-400 mr-2 tabular-nums">{store.branch_num}</span>{store.branch_name}</td>
                           {STORE_METRICS.map(m => <td key={m} className="border p-2"><input type="number" value={store.metrics?.[m] ?? ''} onChange={e => setStoreCell(store.branch_num, m, e.target.value)} className="border rounded-md px-2 py-1 w-full text-sm text-right tabular-nums" /></td>)}
                         </tr>
                       ))}
-                      <tr className="bg-slate-50 font-medium">
-                        <td className="border p-2 text-slate-500 text-xs">小计</td>
-                        {STORE_METRICS.map(m => {
-                          const sum = r2StoreSum(m); const target = Number(r2.metrics?.[m]) || 0; const diff = sum - target;
-                          return <td key={m} className="border p-2"><div className="flex items-center gap-2"><input type="number" value={r2.metrics?.[m] ?? ''} onChange={e => setR2Cell(wz.war_zone, r2.region_l2, m, e.target.value)} className="border rounded-md px-2 py-1 w-32 text-sm text-right tabular-nums" /><span className={`text-xs tabular-nums ${diff === 0 ? 'text-green-600' : 'text-red-600'}`}>子和 {sum.toLocaleString()}{diff !== 0 && <span className="ml-1">({diff > 0 ? '+' : ''}{diff.toLocaleString()})</span>}</span></div></td>;
-                        })}
-                      </tr>
                     </Fragment>
                   );
                 })}
-                <tr className="bg-primary/5 font-medium">
-                  <td className="border p-2 text-primary text-xs">战区合计</td>
-                  <td className="border p-2"></td>
-                  {STORE_METRICS.map(m => {
-                    const sum = wzRegionSumAll(m); const target = Number(wz.metrics?.[m]) || 0; const diff = sum - target;
-                    return <td key={m} className="border p-2"><div className="flex items-center gap-2"><input type="number" value={wz.metrics?.[m] ?? ''} onChange={e => setWzCell(wz.war_zone, m, e.target.value)} className="border rounded-md px-2 py-1 w-32 text-sm text-right tabular-nums" /><span className={`text-xs tabular-nums ${diff === 0 ? 'text-green-600' : 'text-red-600'}`}>子和 {sum.toLocaleString()}{diff !== 0 && <span className="ml-1">({diff > 0 ? '+' : ''}{diff.toLocaleString()})</span>}</span></div></td>;
-                  })}
-                </tr>
               </Fragment>
             );
           })}
