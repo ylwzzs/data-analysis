@@ -5,7 +5,7 @@ const POSTGREST_URL = process.env.POSTGREST_URL || "http://postgrest:3000";
 const INSFORGE_API_KEY = process.env.INSFORGE_API_KEY!;
 const headers = { apikey: INSFORGE_API_KEY, Authorization: `Bearer ${INSFORGE_API_KEY}`, 'Content-Type': 'application/json' };
 
-// GET ?parent_id=X → {categoryRows(总部品类), branchRows(门店), balance}
+// GET ?parent_id=X → {categoryRows(总部品类), warZoneRows, regionRows, branchRows(=storeRows 兼容), balance}
 export async function GET(req: NextRequest) {
   const pid = req.nextUrl.searchParams.get('parent_id');
   if (!pid) return NextResponse.json({ error: 'missing parent_id' }, { status: 400 });
@@ -14,7 +14,14 @@ export async function GET(req: NextRequest) {
     fetch(`${POSTGREST_URL}/rpc/get_breakdown`, { method: 'POST', headers, body: JSON.stringify({ p_parent_id: Number(pid) }) }).then(r => r.json()),
     fetch(`${POSTGREST_URL}/rpc/check_breakdown_balance`, { method: 'POST', headers, body: JSON.stringify({ p_parent_id: Number(pid) }) }).then(r => r.json()),
   ]);
-  return NextResponse.json({ categoryRows: cat || [], branchRows: br || [], balance: ck || {} });
+  // br(063后) = {warZoneRows, regionRows, storeRows}; branchRows 兼容字段=storeRows
+  return NextResponse.json({
+    categoryRows: cat || [],
+    warZoneRows: br?.warZoneRows || [],
+    regionRows: br?.regionRows || [],
+    branchRows: br?.storeRows || [],
+    balance: ck || {},
+  });
 }
 
 // POST { parent_id, sbc?, rows } → 按 rows[0].category 分派(品类→hq RPC / 门店→store RPC)
