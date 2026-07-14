@@ -48,6 +48,13 @@ export function KpiCards({
   focus: MetricCode;
   onFocus: (m: MetricCode) => void;
 }) {
+  if (rows.length === 0) {
+    return (
+      <div className="rounded-lg border border-slate-200 bg-white p-4 text-center text-slate-400 py-8 text-sm">
+        暂无指标数据
+      </div>
+    );
+  }
   return (
     <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
       {METRIC_ORDER.map((code) => {

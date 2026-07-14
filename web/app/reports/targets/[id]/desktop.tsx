@@ -81,17 +81,17 @@ export function DesktopDashboard({
 
       {/* 趋势 + 排行 */}
       <div className="grid grid-cols-3 gap-4">
-        <div className="col-span-2 rounded-md border border-slate-200 bg-white p-4">
+        <div className="col-span-2 rounded-lg border border-slate-200 bg-white p-4">
           <h3 className="mb-2 text-sm font-medium text-slate-700">
             累计达成趋势 · {METRICS[focus].label}
           </h3>
-          <LineChart data={focusTrend} />
+          {focusTrend.length > 0 ? <LineChart data={focusTrend} /> : <div className="text-center text-slate-400 py-8 text-sm">暂无数据</div>}
         </div>
-        <div className="rounded-md border border-slate-200 bg-white p-4">
+        <div className="rounded-lg border border-slate-200 bg-white p-4">
           <h3 className="mb-2 text-sm font-medium text-slate-700">
             {focusIsStore ? "门店" : "品类"}达成排行 · {METRICS[focus].label}
           </h3>
-          <RankChart data={focusRank} />
+          {focusRank.length > 0 ? <RankChart data={focusRank} /> : <div className="text-center text-slate-400 py-8 text-sm">暂无数据</div>}
         </div>
       </div>
       {/* 门店 × 指标 交叉表：列动态（store breakdown 仅 sale/delivery） */}

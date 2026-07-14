@@ -120,7 +120,7 @@ export function MobileDashboard({
           <h4 className="mb-1 text-xs text-slate-500">
             累计达成趋势 · {METRICS[focus].label}
           </h4>
-          <LineChart data={focusTrend} height={160} />
+          {focusTrend.length > 0 ? <LineChart data={focusTrend} height={160} /> : <div className="text-center text-slate-400 py-8 text-sm">暂无数据</div>}
         </div>
 
         {/* 卡3：门店/品类排行 */}
@@ -128,7 +128,7 @@ export function MobileDashboard({
           <h4 className="mb-1 text-xs text-slate-500">
             {focusIsStore ? "门店" : "品类"}达成排行 · {METRICS[focus].label}
           </h4>
-          <RankChart data={focusRank} height={200} />
+          {focusRank.length > 0 ? <RankChart data={focusRank} height={200} /> : <div className="text-center text-slate-400 py-8 text-sm">暂无数据</div>}
         </div>
       </div>
     </div>
