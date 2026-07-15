@@ -1,17 +1,17 @@
 // web/app/admin/targets/page.tsx
-// 目标管理：一个目标含总部板块(品类×出库) + 门店板块(销售/配送,分解门店)。列表按 target_id 聚合。
+// 目标管理：一个目标含总部板块(品类×总仓出库) + 门店板块(门店零售/门店配送,分解门店)。列表按 target_id 聚合。
 'use client';
 import { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
 
 const HQ_METRICS = [
-  { code: 'outbound_amt', name: '出库金额' },
-  { code: 'outbound_profit', name: '出库毛利' },
+  { code: 'outbound_amt', name: '总仓出库金额' },
+  { code: 'outbound_profit', name: '总仓出库毛利' },
 ];
-const HQ_CATEGORIES = ['水果', '标品耗材'];
+const HQ_CATEGORIES = ['水果', '标品', '耗材'];
 const STORE_METRICS = [
-  { code: 'sale', name: '销售总额' },
-  { code: 'delivery', name: '配送' },
+  { code: 'sale', name: '门店零售' },
+  { code: 'delivery', name: '门店配送' },
 ];
 
 export default function TargetsPage() {
@@ -36,11 +36,11 @@ export default function TargetsPage() {
   return (
     <div className="p-4">
       <h1 className="text-xl font-bold mb-2">目标管理</h1>
-      <p className="text-sm text-gray-500 mb-3">每个目标含「总部板块」(出库金额/毛利按品类，不拆门店) + 「门店板块」(销售/配送，分解到门店)。</p>
+      <p className="text-sm text-gray-500 mb-3">每个目标含「总部板块」(总仓出库金额/毛利按品类，不拆门店) + 「门店板块」(门店零售/门店配送，分解到门店)。</p>
       <div className="mb-4"><button onClick={() => setShow(true)} className="bg-primary text-white px-4 py-1 text-sm rounded-md">新建目标</button></div>
       <table className="w-full text-sm border-collapse tabular-nums">
         <thead><tr className="bg-gray-100">
-          {['名称', '周期', '出库金额', '出库毛利', '销售', '配送', '状态', '操作'].map(h => <th key={h} className="border p-2 text-left">{h}</th>)}
+          {['名称', '周期', '总仓出库金额', '总仓出库毛利', '门店零售', '门店配送', '状态', '操作'].map(h => <th key={h} className="border p-2 text-left">{h}</th>)}
         </tr></thead>
         <tbody>
           {loading ? <tr><td colSpan={8} className="border p-2 text-gray-400 text-center">加载中…</td></tr> : list.length === 0 && <tr><td colSpan={8} className="border p-2 text-gray-400 text-center">暂无目标</td></tr>}
@@ -63,7 +63,7 @@ export default function TargetsPage() {
   );
 }
 
-// 新建目标：一个 form 两板块——总部(品类2×2) + 门店(销售总/配送总)
+// 新建目标：一个 form 两板块——总部(品类3×2) + 门店(门店零售总/门店配送总)
 function TargetForm({ onSaved, onClose }: { onSaved: () => void; onClose: () => void }) {
   const [name, setName] = useState('');
   const [brand, setBrand] = useState('ALL');
@@ -112,7 +112,7 @@ function TargetForm({ onSaved, onClose }: { onSaved: () => void; onClose: () => 
           <div><label className="text-xs text-gray-500">结束日期</label><input type="date" value={end} onChange={e => setEnd(e.target.value)} className="border rounded-md w-full px-2 py-1 text-sm" /></div>
         </div>
 
-        <h3 className="font-medium text-sm mb-1 text-primary">总部板块 <span className="text-xs text-gray-500 font-normal">（出库金额/毛利，按品类，不拆门店）</span></h3>
+        <h3 className="font-medium text-sm mb-1 text-primary">总部板块 <span className="text-xs text-gray-500 font-normal">（总仓出库金额/毛利，按品类，不拆门店）</span></h3>
         <table className="w-full text-sm border-collapse mb-4 tabular-nums">
           <thead><tr className="bg-gray-100">
             <th className="border p-2 text-left font-normal">品类</th>
@@ -132,7 +132,7 @@ function TargetForm({ onSaved, onClose }: { onSaved: () => void; onClose: () => 
           </tbody>
         </table>
 
-        <h3 className="font-medium text-sm mb-1 text-primary">门店板块 <span className="text-xs text-gray-500 font-normal">（销售/配送总目标，保存后在分解页拆到门店）</span></h3>
+        <h3 className="font-medium text-sm mb-1 text-primary">门店板块 <span className="text-xs text-gray-500 font-normal">（门店零售/门店配送总目标，保存后在分解页拆到门店）</span></h3>
         <div className="grid grid-cols-2 gap-4 mb-4">
           {STORE_METRICS.map(m => (
             <div key={m.code}><label className="text-xs text-gray-500">{m.name}总目标(元)</label><input type="number" value={storeVals[m.code]} onChange={e => setStoreVals({ ...storeVals, [m.code]: e.target.value })} className="border rounded-md w-full px-2 py-1 text-sm text-right tabular-nums" /></div>
