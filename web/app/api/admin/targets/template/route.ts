@@ -18,7 +18,8 @@ export async function GET(req: NextRequest) {
   const b = await fetch(`${POSTGREST_URL}/rpc/check_breakdown_balance`, { method: 'POST', headers, body: JSON.stringify({ p_parent_id: Number(pid) }) });
   const balance = await b.json();
 
-  const metrics: string[] = Object.keys(balance || {}).length ? Object.keys(balance) : (rows?.[0]?.metrics ? Object.keys(rows[0].metrics) : ['sale']);
+  // 门店分解模板只含门店指标 sale/delivery（出库金额/毛利是总部品类维度，不在门店分解）
+  const metrics: string[] = ['sale', 'delivery'];
 
   // 第1行：参考-总目标（前5格留空，后接各指标总目标）
   const refRow = ['参考-总目标', '', '', '', '', ...metrics.map(m => (balance as any)?.[m]?.total ?? '')];
