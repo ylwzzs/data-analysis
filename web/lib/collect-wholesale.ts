@@ -207,28 +207,27 @@ export async function collectWholesaleOnce(
       const endpoint = isInc ? '/merge' : '/transform';
       const action = isInc ? 'merge' : 'transform';
       console.log(`[collect-wholesale] DuckDB ${action}: ${flat.length} records`);
-      const duckRes = await fetch(`${DUCKDB_URL}${endpoint}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-agent-key': AGENT_API_KEY },
-        body: JSON.stringify({
-          records: flat,
-          config: {
-            date: dateStr, source: 'lemeng',
-            partition_by: ['branch_num'],                   // 按销售门店分片
-            dedupe_key: ['id'],
-            required_fields: ['pos_order_num', 'item_num', 'branch_num'],
-            output_format: 'parquet', compression: 'zstd',
-            base_path: `lemeng/wholesale_detail/${companyId}/${dateStr}`
-          }
-        })
-      });
-      if (!duckRes.ok) throw new Error(`DuckDB ${action} failed: ${duckRes.status} ${await duckRes.text()}`);
-      const dj = await duckRes.json();
-      if (!dj.success) throw new Error(dj.error || `${action} failed`);
-      result.storagePath = dj.combined_file;
+      // 按数据实际日期(audit_time→YYYYMMDD)分区写，避免回溯多天时全月数据写到 dtFrom 目录致 /compute 翻倍
+      const byBizday: Record<string, any[]> = {};
+      for (const r of flat) {
+        const raw = String(r.audit_time || '').slice(0, 10).replace(/-/g, '') || dateStr;
+        (byBizday[raw] ||= []).push(r);
+      }
+      let lastPath = '';
+      for (const [bizday, recs] of Object.entries(byBizday)) {
+        const duckRes = await fetch(`${DUCKDB_URL}${endpoint}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-agent-key': AGENT_API_KEY },
+          body: JSON.stringify({ records: recs, config: { date: bizday, source: 'lemeng', partition_by: ['branch_num'], dedupe_key: ['id'], required_fields: ['pos_order_num', 'item_num', 'branch_num'], output_format: 'parquet', compression: 'zstd', base_path: `lemeng/wholesale_detail/${companyId}/${bizday}` } })
+        });
+        if (!duckRes.ok) throw new Error(`DuckDB ${action} failed (${bizday}): ${duckRes.status} ${await duckRes.text()}`);
+        const dj = await duckRes.json();
+        if (!dj.success) throw new Error(dj.error || `${action} failed (${bizday})`);
+        if (dj.combined_file) lastPath = dj.combined_file;
+        if (dj.invalid_records > 0 || dj.duplicates_removed > 0) console.warn(`[collect-wholesale] ${bizday} quality: ${dj.invalid_records} invalid, ${dj.duplicates_removed} dup`);
+      }
+      result.storagePath = lastPath;
       console.log(`[collect-wholesale] Parquet ${action} success: ${result.storagePath}`);
-      if (dj.invalid_records > 0 || dj.duplicates_removed > 0)
-        console.warn(`[collect-wholesale] data quality: ${dj.invalid_records} invalid, ${dj.duplicates_removed} dup`);
     } catch (e: any) {
       console.error(`[collect-wholesale] DuckDB ${mode} failed: ${e.message}`);
       result.error += (result.error ? '; ' : '') + `${mode === 'incremental' ? 'Merge' : 'Transform'} failed: ${e.message}`;
