@@ -8,7 +8,7 @@ import { useParams } from 'next/navigation';
 import { toast } from 'sonner';
 
 const HQ_METRICS = ['outbound_amt', 'outbound_profit'];
-const HQ_CATEGORIES = ['水果', '标品耗材'];
+const HQ_CATEGORIES = ['水果', '标品', '耗材'];
 const STORE_METRICS = ['sale', 'delivery'];
 const METRIC_NAME: Record<string, string> = { sale: '销售总额', delivery: '配送', outbound_amt: '出库金额', outbound_profit: '出库毛利' };
 
