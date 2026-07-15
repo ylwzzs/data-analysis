@@ -304,7 +304,9 @@ export async function collectOnce(
 
       const byBizday: Record<string, any[]> = {};
       for (const r of flatRecords) {
-        const d = r.order_detail_bizday || dates[0];
+        // bizday 统一 YYYY-MM-DD（order_detail_bizday 是 YYYYMMDD，转成和分区路径一致，避免 /compute glob 读到 YYYYMMDD+YYYY-MM-DD 两路径翻倍）
+        const raw = String(r.order_detail_bizday || dates[0]);
+        const d = /^\d{8}$/.test(raw) ? `${raw.slice(0,4)}-${raw.slice(4,6)}-${raw.slice(6,8)}` : raw;
         (byBizday[d] ||= []).push(r);
       }
       console.log(`[collect] Calling DuckDB ${action}: ${flatRecords.length} records, ${Object.keys(byBizday).length} 天分区`);
