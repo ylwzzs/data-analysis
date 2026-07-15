@@ -286,16 +286,16 @@ async function executeTask(task: {
       const branchNumsStr = String(distributionBranch);
       const limit = params.page_size || 200;
       const today = getTodayChina();
-      // dtFrom/dtTo 带时分秒（接口要求 "YYYY-MM-DD HH:MM:SS"）
-      const dates = params.date_mode === 'today'
-        ? { from: `${today} 00:00:00`, to: `${today} 23:59:59` }
-        : { from: `${getYesterdayChina()} 00:00:00`, to: `${getYesterdayChina()} 23:59:59` };
-
       // 模式判定（同 retail：新一天/距上次全量≥55min/无水位线 → full；否则 incremental）
       const watermark = params.watermark || {};
       const watermarkLastCount: number = watermark.last_count || 0;
       const mode: 'full' | 'incremental' =
         (watermark.date !== today || Date.now() - (watermark.last_full_ts || 0) >= 55 * 60 * 1000 || watermark.last_count == null) ? 'full' : 'incremental';
+      // dtFrom/dtTo 带时分秒；full 回溯N天补延迟单据，incremental 当天增量
+      const lookback = params.lookback_days ?? 3;
+      const dates = params.date_mode === 'today'
+        ? (mode === 'full' ? { from: `${getDateOffsetChina(-lookback)} 00:00:00`, to: `${today} 23:59:59` } : { from: `${today} 00:00:00`, to: `${today} 23:59:59` })
+        : { from: `${getYesterdayChina()} 00:00:00`, to: `${getYesterdayChina()} 23:59:59` };
       console.log(`[scheduler] 任务 ${task.name}: dtFrom=${dates.from}, mode=${mode}`);
 
       let lastResult: DeliveryCollectResult = { records: [], apiTotal: 0, storagePath: '', error: '', newApiTotal: 0, skipped: false };
@@ -358,13 +358,14 @@ async function executeTask(task: {
       const branchNumsStr = '99';
       const limit = params.page_size || 200;
       const today = getTodayChina();
-      const dates = params.date_mode === 'today'
-        ? { from: `${today} 00:00:00`, to: `${today} 23:59:59` }
-        : { from: `${getYesterdayChina()} 00:00:00`, to: `${getYesterdayChina()} 23:59:59` };
       const watermark = params.watermark || {};
       const watermarkLastCount: number = watermark.last_count || 0;
       const mode: 'full' | 'incremental' =
         (watermark.date !== today || Date.now() - (watermark.last_full_ts || 0) >= 55 * 60 * 1000 || watermark.last_count == null) ? 'full' : 'incremental';
+      const lookback = params.lookback_days ?? 3;
+      const dates = params.date_mode === 'today'
+        ? (mode === 'full' ? { from: `${getDateOffsetChina(-lookback)} 00:00:00`, to: `${today} 23:59:59` } : { from: `${today} 00:00:00`, to: `${today} 23:59:59` })
+        : { from: `${getYesterdayChina()} 00:00:00`, to: `${getYesterdayChina()} 23:59:59` };
       console.log(`[scheduler] 任务 ${task.name}: dateFrom=${dates.from}, mode=${mode}`);
 
       let lastResult: WholesaleCollectResult = { records: [], apiTotal: 0, storagePath: '', error: '', newApiTotal: 0, skipped: false };
