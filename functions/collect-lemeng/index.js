@@ -68,34 +68,25 @@ async function buildHeaders(authToken, branchNumsStr, urlPath, bodyStr, secretKe
 }
 
 // ===== API 调用 =====
-async function callApi(urlPath, authToken, bodyStr, branchNumsStr, secretKey, maxRetries = 2) {
+async function callApi(urlPath, authToken, bodyStr, branchNumsStr, secretKey, maxRetries = 3) {
   const fullUrl = BASE_URL + urlPath;
-  
+  let lastErr = null;
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     const headers = await buildHeaders(authToken, branchNumsStr, urlPath, bodyStr, secretKey);
-    
-    const response = await fetch(fullUrl, {
-      method: 'POST',
-      headers: headers,
-      body: bodyStr
-    });
-    
-    if (response.status === 200) {
-      const data = await response.json();
-      
-      if (data.code === -1 && attempt < maxRetries - 1) {
-        console.log(`Attempt ${attempt + 1}: code=-1, retrying after 2s...`);
-        await delay(2000);
-        continue;
+    try {
+      const response = await fetch(fullUrl, { method: 'POST', headers, body: bodyStr });
+      if (response.status === 200) {
+        const data = await response.json();
+        if (data.code === 0) return { ok: true, data };
+        lastErr = `code=${data.code}`;
+        if (attempt < maxRetries - 1) { console.log(`[collect-lemeng] 调用失败(${lastErr}), 重试 ${attempt + 1}/${maxRetries}...`); await delay(2000); continue; }
+        return { ok: false, data, error: lastErr };
       }
-      
-      return { ok: true, data };
-    }
-    
-    return { ok: false, status: response.status, error: await response.text() };
+      lastErr = `HTTP ${response.status}`;
+    } catch (e) { lastErr = String(e); }
+    if (attempt < maxRetries - 1) { console.log(`[collect-lemeng] 调用失败(${lastErr}), 重试 ${attempt + 1}/${maxRetries}...`); await delay(2000); }
   }
-  
-  return { ok: false, error: "Max retries exceeded" };
+  return { ok: false, error: lastErr || "Max retries exceeded" };
 }
 
 function delay(ms) {
@@ -106,63 +97,56 @@ function delay(ms) {
 async function fetchAllPagesOptimized(authToken, dates, branchNums, pageSize, secretKey) {
   console.log('[collect-lemeng] 开始并行采集...');
   const startTime = Date.now();
-  
+
   const branchNumsStr = branchNums.join(',');
   const warmBody = buildBody(branchNums, dates, 1, 5);
   const warmResult = await callApi(ENDPOINT_RETAIL_DETAIL, authToken, warmBody, branchNumsStr, secretKey);
-  
-  if (!warmResult.ok || warmResult.data.code === -1) {
+  if (!warmResult.ok) {
     throw new Error(`Warm-up failed: token may be expired. ${JSON.stringify(warmResult.data || warmResult)}`);
   }
   console.log('[collect-lemeng] 会话预热成功');
-  
+
   const firstBody = buildBody(branchNums, dates, 1, pageSize);
   const firstResult = await callApi(ENDPOINT_RETAIL_DETAIL, authToken, firstBody, branchNumsStr, secretKey);
-  
-  if (!firstResult.ok || firstResult.data.code !== 0) {
+  if (!firstResult.ok) {
     throw new Error(`First page failed: ${JSON.stringify(firstResult.data || firstResult)}`);
   }
-  
+
   const allRecords = [...(firstResult.data.result || [])];
   console.log(`[collect-lemeng] 第1页: ${allRecords.length} 条`);
-  
+
   const parallelism = 5;
+  const MAX_PAGES = 1000; // 保护上限（以空批判定为主，避免截断大数据量）
   let page = 2;
-  
-  while (true) {
+  let failCount = 0;
+  let emptyBatches = 0;
+
+  while (page <= MAX_PAGES) {
     const batchPromises = [];
-    for (let i = 0; i < parallelism && page <= 100; i++, page++) {
-      const bodyStr = buildBody(branchNums, dates, page, pageSize);
-      batchPromises.push(callApi(ENDPOINT_RETAIL_DETAIL, authToken, bodyStr, branchNumsStr, secretKey));
+    for (let i = 0; i < parallelism && page <= MAX_PAGES; i++, page++) {
+      batchPromises.push(callApi(ENDPOINT_RETAIL_DETAIL, authToken, buildBody(branchNums, dates, page, pageSize), branchNumsStr, secretKey));
     }
-    
     if (batchPromises.length === 0) break;
-    
+
     const batchResults = await Promise.all(batchPromises);
     let batchTotal = 0;
-    let shouldBreak = false;
-    
+    let batchFails = 0;
     for (const result of batchResults) {
-      if (!result.ok || result.data.code !== 0) {
-        console.error(`[collect-lemeng] 分页失败:`, result.error || result.data);
-        continue;
-      }
+      if (!result.ok) { failCount++; batchFails++; console.error('[collect-lemeng] 分页失败(重试后仍失败, 该页数据缺失):', result.error); continue; }
       const records = result.data.result || [];
       allRecords.push(...records);
       batchTotal += records.length;
-      
-      if (records.length < pageSize) {
-        shouldBreak = true;
-      }
     }
-    
-    console.log(`[collect-lemeng] 进度: 已拉取 ${allRecords.length} 条`);
-    
-    if (shouldBreak || batchTotal === 0) break;
+    console.log(`[collect-lemeng] 进度: 已拉取 ${allRecords.length} 条, 累计失败页 ${failCount}`);
+
+    // 结束判定：整批全0且无失败 → 连续2次才停（防临时空页误判，不再用"单页<pageSize"提前break）
+    if (batchTotal === 0 && batchFails === 0) { emptyBatches++; if (emptyBatches >= 2) break; }
+    else emptyBatches = 0;
+    if (batchFails === batchResults.length) { console.error('[collect-lemeng] 整批全失败, 终止'); break; }
   }
-  
-  console.log(`[collect-lemeng] 采集完成: ${allRecords.length} 条，耗时 ${Date.now() - startTime}ms`);
-  return allRecords;
+
+  console.log(`[collect-lemeng] 采集完成: ${allRecords.length} 条, 失败页 ${failCount}, 耗时 ${Date.now() - startTime}ms`);
+  return { records: allRecords, failCount };
 }
 
 // ===== 天翼云 OOS 存储 =====
@@ -348,8 +332,9 @@ module.exports = async function(req) {
     }
     console.log('[collect-lemeng] 认证token已准备好');
     
-    // 3. 日期参数（默认昨天）
-    const dates = params?.dates || [getYesterday(), getYesterday()];
+    // 3. 日期参数（默认滚动回溯3天到昨天，容延迟单据；lookback_days 可配）
+    const lookback = params?.lookback_days ?? 3;
+    const dates = params?.dates || getLookbackRange(lookback);
     const branchNums = params?.branch_nums || ALL_BRANCH_NUMS;
     const pageSize = params?.page_size || 200;
     
@@ -360,7 +345,7 @@ module.exports = async function(req) {
     });
     
     // 4. 执行采集
-    const records = await fetchAllPagesOptimized(authToken, dates, branchNums, pageSize, SECRET_KEY);
+    const { records, failCount } = await fetchAllPagesOptimized(authToken, dates, branchNums, pageSize, SECRET_KEY);
     
     console.log(`[collect-lemeng] 采集完成: ${records.length} 条记录`);
     
@@ -388,6 +373,8 @@ module.exports = async function(req) {
       branches: branchNums.length,
       storage_type,
       storage_path,
+      fail_pages: failCount,
+      complete: failCount === 0,
       sample: records.slice(0, 2),
       timestamp: new Date().toISOString()
     };
@@ -416,4 +403,12 @@ function getYesterday() {
   const d = new Date();
   d.setDate(d.getDate() - 1);
   return d.toISOString().split('T')[0];
+}
+
+// 滚动回溯窗口：[今天-N, 昨天]，每天采集覆盖最近N天，延迟生成/审核的单据会被后续重叠窗口补采（/merge按单据号去重，重叠不重复）
+function getLookbackRange(days) {
+  const end = new Date(); end.setDate(end.getDate() - 1);
+  const start = new Date(); start.setDate(start.getDate() - days);
+  const f = (d) => d.toISOString().split('T')[0];
+  return [f(start), f(end)];
 }

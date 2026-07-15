@@ -3,7 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@insforge/sdk';
-import { collectOnce, getYesterdayChina, getTodayChina, LEMENG_SECRET_KEY, CollectResult } from '@/lib/collect';
+import { collectOnce, getYesterdayChina, getTodayChina, getDateOffsetChina, LEMENG_SECRET_KEY, CollectResult } from '@/lib/collect';
 import { notifyWecom } from '@/lib/notify';
 import { ensureSchedulerInitialized } from '@/lib/scheduler';
 
@@ -62,8 +62,10 @@ export async function POST(req: NextRequest) {
     }
 
     const params = task.params || {};
+    // 滚动回溯窗口：date_mode=today → [今天-lookback, 今天]，覆盖延迟生成/审核的单据（同天重采去重）
+    const lookback = params.lookback_days ?? 3;
     const dates = params.date_mode === 'today'
-      ? [getTodayChina(), getTodayChina()]
+      ? [getDateOffsetChina(-lookback), getTodayChina()]
       : (params.dates || [getYesterdayChina(), getYesterdayChina()]);
     const branchNums = params.branch_nums || [];
     const pageSize = params.page_size || 200;

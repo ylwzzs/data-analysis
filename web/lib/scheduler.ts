@@ -4,7 +4,7 @@
 
 import cron, { ScheduledTask } from 'node-cron';
 import { createClient } from '@insforge/sdk';
-import { collectOnce, getYesterdayChina, getTodayChina, CollectResult } from './collect';
+import { collectOnce, getYesterdayChina, getTodayChina, getDateOffsetChina, CollectResult } from './collect';
 import { collectDeliveryOnce, type DeliveryCollectResult } from './collect-delivery';
 import { collectWholesaleOnce, type WholesaleCollectResult } from './collect-wholesale';
 import { collectItems, CollectItemsResult } from './collect-items';
@@ -418,14 +418,11 @@ async function executeTask(task: {
 
     // ===== 订单明细采集（默认） =====
     const today = getTodayChina();
-    const dates = params.date_mode === 'today'
-      ? [today, today]
-      : (params.dates || [getYesterdayChina(), getYesterdayChina()]);
     const branchNums = params.branch_nums || [];
     const branchNumsStr = branchNums.join(',');
     const pageSize = params.page_size || 200;
 
-    // 模式判定：新一天 / 距上次全量≥55min / 无水位线 → full（覆盖 + 每小时核对）；否则 incremental（续采尾部）
+    // 模式判定：新一天 / 距上次全量≥55min / 无水位线 → full（覆盖+核对）；否则 incremental（续采尾部）
     const watermark = params.watermark || {};
     const watermarkLastCount: number = watermark.last_count || 0;
     const mode: 'full' | 'incremental' =
@@ -434,6 +431,11 @@ async function executeTask(task: {
         watermark.last_count == null)
         ? 'full'
         : 'incremental';
+    // dates：full 回溯N天(补延迟生成/审核的单据，按 bizday 分区去重)；incremental 当天增量(水位线续采尾部)
+    const lookback = params.lookback_days ?? 3;
+    const dates = params.date_mode === 'today'
+      ? (mode === 'full' ? [getDateOffsetChina(-lookback), today] : [today, today])
+      : (params.dates || [getYesterdayChina(), getYesterdayChina()]);
 
     console.log(`[scheduler] 任务 ${task.name}: dates=${dates[0]}, branches=${branchNums.length}, mode=${mode}`);
 

@@ -186,6 +186,14 @@ export function getTodayChina(): string {
   return chinaTime.toISOString().split('T')[0];
 }
 
+// 中国时区，相对今天偏移 offsetDays 天的日期（YYYY-MM-DD）。用于滚动回溯窗口 [今天-N, 今天]
+export function getDateOffsetChina(offsetDays: number): string {
+  const now = new Date();
+  const china = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+  china.setDate(china.getDate() + offsetDays);
+  return china.toISOString().split('T')[0];
+}
+
 // ===== 单次采集 + 转换 =====
 export interface CollectResult {
   records: any[];
@@ -296,50 +304,56 @@ export async function collectOnce(
   }
 
   // ===== 写入 Parquet：full 用 /transform 覆盖；incremental 用 /merge 合并 =====
+  // 按 order_detail_bizday 分组写（回溯多天 dates 范围时各自分区，避免全写到 dates[0]）；bizday 缺失用 dates[0]
   if (result.records.length > 0) {
     try {
       const flatRecords = flattenRecords(result.records);
-      const dateStr = dates[0];
       const isIncremental = mode === 'incremental';
       const endpoint = isIncremental ? '/merge' : '/transform';
       const action = isIncremental ? 'merge' : 'transform';
 
-      console.log(`[collect] Calling DuckDB ${action}: ${flatRecords.length} records`);
-
-      const duckRes = await fetch(`${DUCKDB_URL}${endpoint}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-agent-key': AGENT_API_KEY },
-        body: JSON.stringify({
-          records: flatRecords,
-          config: {
-            date: dateStr,
-            source: 'lemeng',
-            partition_by: ['branch_num'],
-            dedupe_key: ['order_no', 'order_detail_num'],
-            required_fields: ['order_no', 'item_code', 'branch_num'],
-            output_format: 'parquet',
-            compression: 'zstd',
-            base_path: `lemeng/retail_detail/${companyId}/${dateStr}`
-          }
-        })
-      });
-
-      if (!duckRes.ok) {
-        const errText = await duckRes.text();
-        throw new Error(`DuckDB ${action} failed: ${duckRes.status} ${errText}`);
+      const byBizday: Record<string, any[]> = {};
+      for (const r of flatRecords) {
+        const d = r.order_detail_bizday || dates[0];
+        (byBizday[d] ||= []).push(r);
       }
+      console.log(`[collect] Calling DuckDB ${action}: ${flatRecords.length} records, ${Object.keys(byBizday).length} 天分区`);
 
-      const duckResult = await duckRes.json();
-      if (!duckResult.success) {
-        throw new Error(duckResult.error || `${action} failed`);
+      let lastPath = '';
+      for (const [bizday, recs] of Object.entries(byBizday)) {
+        const duckRes = await fetch(`${DUCKDB_URL}${endpoint}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-agent-key': AGENT_API_KEY },
+          body: JSON.stringify({
+            records: recs,
+            config: {
+              date: bizday,
+              source: 'lemeng',
+              partition_by: ['branch_num'],
+              dedupe_key: ['order_no', 'order_detail_num'],
+              required_fields: ['order_no', 'item_code', 'branch_num'],
+              output_format: 'parquet',
+              compression: 'zstd',
+              base_path: `lemeng/retail_detail/${companyId}/${bizday}`
+            }
+          })
+        });
+
+        if (!duckRes.ok) {
+          const errText = await duckRes.text();
+          throw new Error(`DuckDB ${action} failed (${bizday}): ${duckRes.status} ${errText}`);
+        }
+        const duckResult = await duckRes.json();
+        if (!duckResult.success) {
+          throw new Error(duckResult.error || `${action} failed (${bizday})`);
+        }
+        if (duckResult.combined_file) lastPath = duckResult.combined_file;
+        if (duckResult.invalid_records > 0 || duckResult.duplicates_removed > 0) {
+          console.warn(`[collect] ${bizday} data quality: ${duckResult.invalid_records} invalid, ${duckResult.duplicates_removed} dup`);
+        }
       }
-
-      result.storagePath = duckResult.combined_file;
+      result.storagePath = lastPath;
       console.log(`[collect] Parquet ${action} success: ${result.storagePath}`);
-
-      if (duckResult.invalid_records > 0 || duckResult.duplicates_removed > 0) {
-        console.warn(`[collect] Data quality: ${duckResult.invalid_records} invalid, ${duckResult.duplicates_removed} duplicates`);
-      }
     } catch (duckErr: any) {
       console.error(`[collect] DuckDB ${mode === 'incremental' ? 'merge' : 'transform'} failed: ${duckErr.message}`);
       result.error += (result.error ? '; ' : '') + `${mode === 'incremental' ? 'Merge' : 'Transform'} failed: ${duckErr.message}`;
