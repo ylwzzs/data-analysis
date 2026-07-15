@@ -20,13 +20,15 @@ export async function GET(req: NextRequest) {
 
   // 门店分解模板只含门店指标 sale/delivery（出库金额/毛利是总部品类维度，不在门店分解）
   const metrics: string[] = ['sale', 'delivery'];
+  // get_breakdown 返 {warZoneRows, regionRows, storeRows}，模板用门店行
+  const stores: any[] = rows?.storeRows || [];
 
   // 第1行：参考-总目标（前5格留空，后接各指标总目标）
   const refRow = ['参考-总目标', '', '', '', '', ...metrics.map(m => (balance as any)?.[m]?.total ?? '')];
   // 第2行：表头
   const headRow = ['战区', '二级区域', '分组', '门店号', '门店名', ...metrics.map(m => METRIC_NAME[m] || m)];
   // 第3+行：门店明细
-  const dataRows = (rows || []).map((x: any) => [x.war_zone || '', x.region_l2 || '', x.group || '', x.branch_num, x.branch_name, ...metrics.map(m => x.metrics?.[m] ?? '')]);
+  const dataRows = stores.map((x: any) => [x.war_zone || '', x.region_l2 || '', x.group || '', x.branch_num, x.branch_name, ...metrics.map(m => x.metrics?.[m] ?? '')]);
 
   const ws = XLSX.utils.aoa_to_sheet([refRow, headRow, ...dataRows]);
   const wb = XLSX.utils.book_new();
