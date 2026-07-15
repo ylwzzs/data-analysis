@@ -95,7 +95,7 @@ INSERT INTO report_definitions (
     'daily_sales',
     '每日门店销售汇总',
     'report_daily_sales',
-    's3://lemeng-datasource/lemeng/retail_detail/**/*.parquet',
+    's3://lemeng-datasource/lemeng/retail_detail/*/*-*-*/all.parquet',
     $SQL$
 SELECT
     regexp_extract(filename, 'retail_detail/([0-9]+)/', 1) AS system_book_code,
@@ -141,7 +141,7 @@ INSERT INTO report_definitions (
     'daily_category',
     '每日门店品类汇总',
     'report_daily_category',
-    's3://lemeng-datasource/lemeng/retail_detail/**/*.parquet',
+    's3://lemeng-datasource/lemeng/retail_detail/*/*-*-*/all.parquet',
     $SQL$
 SELECT
     regexp_extract(filename, 'retail_detail/([0-9]+)/', 1) AS system_book_code,
@@ -186,7 +186,7 @@ INSERT INTO report_definitions (
     'weekly_trend',
     '周销售趋势汇总',
     'report_weekly_trend',
-    's3://lemeng-datasource/lemeng/retail_detail/**/*.parquet',
+    's3://lemeng-datasource/lemeng/retail_detail/*/*-*-*/all.parquet',
     $SQL$
 SELECT
     regexp_extract(filename, 'retail_detail/([0-9]+)/', 1) AS system_book_code,
