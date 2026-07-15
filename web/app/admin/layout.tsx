@@ -2,6 +2,7 @@ import { ReactNode } from 'react';
 import Link from 'next/link';
 import { cookies } from 'next/headers';
 import { LayoutDashboard, Package, Store, Target, Users, Settings, Boxes } from 'lucide-react';
+import { Toaster } from 'sonner';
 
 export default async function AdminLayout({
   children,
@@ -63,6 +64,7 @@ export default async function AdminLayout({
         {/* Content */}
         <main className="flex-1 p-6">{children}</main>
       </div>
+      <Toaster richColors position="top-center" />
     </div>
   );
 }
