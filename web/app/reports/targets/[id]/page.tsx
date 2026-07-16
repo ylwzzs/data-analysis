@@ -21,7 +21,7 @@ export default async function TargetDashboard({
   const { id } = await params;
   const targetId = Number(id);
   const isMobile = (await getDeviceType()) === "mobile";
-  console.log("[reports/targets/page]", { targetId, isMobile });
+  console.log("[reports/targets/page]", { targetId, isMobile, render: isMobile ? "MOBILE" : "PC" });
 
   const client = await getClient();
   const { data: totalRows } = await client.database
