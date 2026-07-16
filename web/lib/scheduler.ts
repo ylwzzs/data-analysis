@@ -4,9 +4,9 @@
 
 import cron, { ScheduledTask } from 'node-cron';
 import { createClient } from '@insforge/sdk';
-import { collectOnce, getYesterdayChina, getTodayChina, getDateOffsetChina, CollectResult } from './collect';
-import { collectDeliveryOnce, type DeliveryCollectResult } from './collect-delivery';
-import { collectWholesaleOnce, type WholesaleCollectResult } from './collect-wholesale';
+import { collectOnce, countRetailApi, decodeCompanyId, getYesterdayChina, getTodayChina, getDateOffsetChina, CollectResult } from './collect';
+import { collectDeliveryOnce, countDeliveryApi, type DeliveryCollectResult } from './collect-delivery';
+import { collectWholesaleOnce, countWholesaleApi, type WholesaleCollectResult } from './collect-wholesale';
 import { collectItems, CollectItemsResult } from './collect-items';
 import { collectBranches } from './collect-branches';
 import { notifyWecom } from './notify';
@@ -17,6 +17,15 @@ const INSFORGE_API_KEY = process.env.INSFORGE_API_KEY!;
 const DUCKDB_URL = process.env.DUCKDB_URL || "http://duckdb:9000";
 const AGENT_API_KEY = process.env.AGENT_API_KEY!; // duckdb-service 鉴权（/compute /carry-dims 校验此 key，非 INSFORGE_API_KEY）
 const POSTGREST_URL = process.env.POSTGREST_URL || "http://postgrest:3000"; // PostgREST 直连（gateway 不代理 /rpc，固化 RPC 直连）
+
+// DuckDB 查 parquet 行数（scheduler 对账驱动用：count API total vs 库已采 count，对得上不 full、对不上 full 补采）
+async function duckdbParquetCount(pathGlob: string): Promise<number> {
+  try {
+    const r = await fetch(`${DUCKDB_URL}/query`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-agent-key': AGENT_API_KEY }, body: JSON.stringify({ sql: `SELECT count(*) AS c FROM read_parquet('s3://lemeng-datasource/${pathGlob}')` }) });
+    const d = await r.json();
+    return d.data?.[0]?.c || 0;
+  } catch { return 0; }
+}
 
 // 调度器状态：用 globalThis 持有，跨 chunk 单例。
 // Next.js 把 instrumentation.ts 与 route handler 打包进不同 chunk，各自有独立模块作用域，
@@ -289,8 +298,26 @@ async function executeTask(task: {
       // 模式判定（同 retail：新一天/距上次全量≥55min/无水位线 → full；否则 incremental）
       const watermark = params.watermark || {};
       const watermarkLastCount: number = watermark.last_count || 0;
-      const mode: 'full' | 'incremental' =
-        (watermark.date !== today || Date.now() - (watermark.last_full_ts || 0) >= 55 * 60 * 1000 || watermark.last_count == null) ? 'full' : 'incremental';
+      // 对账驱动：新一天对账前一日；同一天每小时对账当天；其余纯增量
+      const companyId = decodeCompanyId(authToken);
+      const isNewDay = watermark.date !== today;
+      const needHourlyCheck = !isNewDay && (Date.now() - (watermark.last_full_ts || 0) >= 55 * 60 * 1000 || watermark.last_count == null);
+      let mode: 'full' | 'incremental';
+      if (isNewDay) {
+        const prevDay = getDateOffsetChina(-1);
+        const apiPrev = await countDeliveryApi(authToken, distributionBranch, branchNumsStr, `${prevDay} 00:00:00`, `${prevDay} 23:59:59`);
+        const libPrev = await duckdbParquetCount(`lemeng/transfer_detail/${companyId}/${prevDay.replace(/-/g, '')}/all.parquet`);
+        mode = (apiPrev > 0 && libPrev >= apiPrev) ? 'incremental' : 'full';
+        console.log(`[scheduler] ${task.name} 前一日对账 ${libPrev}/${apiPrev} → ${mode}`);
+      } else if (needHourlyCheck) {
+        const apiToday = await countDeliveryApi(authToken, distributionBranch, branchNumsStr, `${today} 00:00:00`, `${today} 23:59:59`);
+        const libToday = await duckdbParquetCount(`lemeng/transfer_detail/${companyId}/${today.replace(/-/g, '')}/all.parquet`);
+        mode = (apiToday === 0 || libToday >= apiToday) ? 'incremental' : 'full';
+        console.log(`[scheduler] ${task.name} 当天对账 ${libToday}/${apiToday} → ${mode}`);
+        if (mode === 'incremental') watermark.last_full_ts = Date.now();
+      } else {
+        mode = 'incremental';
+      }
       // dtFrom/dtTo 带时分秒；full 回溯N天补延迟单据，incremental 当天增量
       const lookback = params.lookback_days ?? 1;
       const dates = params.date_mode === 'today'
@@ -360,8 +387,26 @@ async function executeTask(task: {
       const today = getTodayChina();
       const watermark = params.watermark || {};
       const watermarkLastCount: number = watermark.last_count || 0;
-      const mode: 'full' | 'incremental' =
-        (watermark.date !== today || Date.now() - (watermark.last_full_ts || 0) >= 55 * 60 * 1000 || watermark.last_count == null) ? 'full' : 'incremental';
+      // 对账驱动：新一天对账前一日；同一天每小时对账当天；其余纯增量
+      const companyId = decodeCompanyId(authToken);
+      const isNewDay = watermark.date !== today;
+      const needHourlyCheck = !isNewDay && (Date.now() - (watermark.last_full_ts || 0) >= 55 * 60 * 1000 || watermark.last_count == null);
+      let mode: 'full' | 'incremental';
+      if (isNewDay) {
+        const prevDay = getDateOffsetChina(-1);
+        const apiPrev = await countWholesaleApi(authToken, branchNumsStr, `${prevDay} 00:00:00`, `${prevDay} 23:59:59`);
+        const libPrev = await duckdbParquetCount(`lemeng/wholesale_detail/${companyId}/${prevDay.replace(/-/g, '')}/all.parquet`);
+        mode = (apiPrev > 0 && libPrev >= apiPrev) ? 'incremental' : 'full';
+        console.log(`[scheduler] ${task.name} 前一日对账 ${libPrev}/${apiPrev} → ${mode}`);
+      } else if (needHourlyCheck) {
+        const apiToday = await countWholesaleApi(authToken, branchNumsStr, `${today} 00:00:00`, `${today} 23:59:59`);
+        const libToday = await duckdbParquetCount(`lemeng/wholesale_detail/${companyId}/${today.replace(/-/g, '')}/all.parquet`);
+        mode = (apiToday === 0 || libToday >= apiToday) ? 'incremental' : 'full';
+        console.log(`[scheduler] ${task.name} 当天对账 ${libToday}/${apiToday} → ${mode}`);
+        if (mode === 'incremental') watermark.last_full_ts = Date.now();
+      } else {
+        mode = 'incremental';
+      }
       const lookback = params.lookback_days ?? 1;
       const dates = params.date_mode === 'today'
         ? (mode === 'full' ? { from: `${getDateOffsetChina(-lookback)} 00:00:00`, to: `${today} 23:59:59` } : { from: `${today} 00:00:00`, to: `${today} 23:59:59` })
@@ -426,12 +471,26 @@ async function executeTask(task: {
     // 模式判定：新一天 / 距上次全量≥55min / 无水位线 → full（覆盖+核对）；否则 incremental（续采尾部）
     const watermark = params.watermark || {};
     const watermarkLastCount: number = watermark.last_count || 0;
-    const mode: 'full' | 'incremental' =
-      (watermark.date !== today ||
-        Date.now() - (watermark.last_full_ts || 0) >= 55 * 60 * 1000 ||
-        watermark.last_count == null)
-        ? 'full'
-        : 'incremental';
+    // 对账驱动：新一天对账前一日(通过 incremental / 失败 full)；同一天每小时对账当天；其余纯增量
+    const companyId = decodeCompanyId(authToken);
+    const isNewDay = watermark.date !== today;
+    const needHourlyCheck = !isNewDay && (Date.now() - (watermark.last_full_ts || 0) >= 55 * 60 * 1000 || watermark.last_count == null);
+    let mode: 'full' | 'incremental';
+    if (isNewDay) {
+      const prevDay = getDateOffsetChina(-1);
+      const apiPrev = await countRetailApi(authToken, branchNums, branchNumsStr, [prevDay, prevDay]);
+      const libPrev = await duckdbParquetCount(`lemeng/retail_detail/${companyId}/${prevDay}/all.parquet`);
+      mode = (apiPrev > 0 && libPrev >= apiPrev) ? 'incremental' : 'full';
+      console.log(`[scheduler] ${task.name} 前一日对账 ${libPrev}/${apiPrev} → ${mode}`);
+    } else if (needHourlyCheck) {
+      const apiToday = await countRetailApi(authToken, branchNums, branchNumsStr, [today, today]);
+      const libToday = await duckdbParquetCount(`lemeng/retail_detail/${companyId}/${today}/all.parquet`);
+      mode = (apiToday === 0 || libToday >= apiToday) ? 'incremental' : 'full';
+      console.log(`[scheduler] ${task.name} 当天对账 ${libToday}/${apiToday} → ${mode}`);
+      if (mode === 'incremental') watermark.last_full_ts = Date.now();
+    } else {
+      mode = 'incremental';
+    }
     // dates：full 回溯N天(补延迟生成/审核的单据，按 bizday 分区去重)；incremental 当天增量(水位线续采尾部)
     const lookback = params.lookback_days ?? 1;
     const dates = params.date_mode === 'today'

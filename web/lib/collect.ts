@@ -14,7 +14,7 @@ const LEMENG_SECRET_KEY = process.env.LEMENG_SECRET_KEY || '';
 
 // 从 token 解出 company_id（品牌），用于按品牌分区存储。
 // 品牌(company)写在 JWT 的 payload.company_id，由 token 决定（非请求参数）。
-function decodeCompanyId(authToken: string): string {
+export function decodeCompanyId(authToken: string): string {
   try {
     const raw = authToken.startsWith('Bearer ') ? authToken.slice(7) : authToken;
     const parts = raw.split('.');
@@ -192,6 +192,12 @@ export function getDateOffsetChina(offsetDays: number): string {
   const china = new Date(now.getTime() + 8 * 60 * 60 * 1000);
   china.setDate(china.getDate() + offsetDays);
   return china.toISOString().split('T')[0];
+}
+
+// 仅查 count（不采集），scheduler 对账驱动用：返 API 指定 dates 的总数
+export async function countRetailApi(authToken: string, branchNums: number[], branchNumsStr: string, dates: string[]): Promise<number> {
+  const countResult = await callLemengApi(ENDPOINT_RETAIL_COUNT, authToken, buildBody(branchNums, dates, 1, 200), branchNumsStr);
+  return (countResult.ok && countResult.data?.code === 0) ? (countResult.data.result || 0) : 0;
 }
 
 // ===== 单次采集 + 转换 =====

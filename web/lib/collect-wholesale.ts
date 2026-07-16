@@ -143,6 +143,12 @@ export interface WholesaleCollectResult {
 }
 export interface WholesaleCollectOptions { mode?: 'full' | 'incremental'; watermarkLastCount?: number; }
 
+// 仅查 count（不采集），scheduler 对账驱动用
+export async function countWholesaleApi(authToken: string, branchNumsStr: string, dtFrom: string, dtTo: string): Promise<number> {
+  const r = await callLemengApi(ENDPOINT_DETAIL, authToken, buildBody(dtFrom, dtTo, 0, 1), branchNumsStr);
+  return (r.ok && r.data?.code === 0) ? (r.data?.data?.count || 0) : 0;
+}
+
 // 单次采集：首页拿 count + 预热 → offset 分页拉全 → 落 Parquet
 export async function collectWholesaleOnce(
   authToken: string,
