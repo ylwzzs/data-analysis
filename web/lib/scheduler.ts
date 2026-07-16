@@ -62,6 +62,7 @@ export async function ensureSchedulerInitialized(): Promise<boolean> {
   // 通讯录全量兜底（平台基础设施，独立于 collect_tasks；先注册，不依赖采集任务查询结果/是否为空）
   registerContactSyncJob();
   registerCarryDimsJob();
+  registerWeeklyReconcileJob();
   registerMonitorJobs();
   registerTargetCloseJob();
 
@@ -694,6 +695,27 @@ function registerCarryDimsJob() {
 }
 
 // D: 目标固化定时兜底（每天 05:10，C1 daily compute 之后；end_date<today 的 active 目标自动固化）
+// 每周一对账（最近7天 API total vs 库 parquet count，异常/通过都推企微）
+function registerWeeklyReconcileJob() {
+  const JOB_KEY = "__weekly_reconcile";
+  if (scheduledJobs.has(JOB_KEY)) return;
+  if (!cron.validate("7 8 * * 1")) return;
+  const job = cron.schedule("7 8 * * 1", async () => {
+    if (runningTasks.has(JOB_KEY)) return;
+    runningTasks.add(JOB_KEY);
+    try {
+      console.log("[scheduler] ⏰ 每周采集对账触发(最近7天)");
+      const days = Array.from({ length: 7 }, (_, i) => getDateOffsetChina(-7 + i));
+      const resp = await fetch("http://localhost:3000/api/admin/reconcile-check", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ days }) });
+      const d = await resp.json();
+      console.log("[scheduler] 周对账完成: 异常", d.abnormal_count, "/", d.total, "(企微已推)");
+    } catch (e: any) { console.error("[scheduler] 周对账失败:", e.message); }
+    finally { runningTasks.delete(JOB_KEY); }
+  }, { timezone: "Asia/Shanghai" });
+  scheduledJobs.set(JOB_KEY, job);
+  console.log("[scheduler] 注册每周采集对账 (7 8 * * 1, Asia/Shanghai)");
+}
+
 function registerTargetCloseJob() {
   const JOB_KEY = "__target_close";
   if (scheduledJobs.has(JOB_KEY)) return;

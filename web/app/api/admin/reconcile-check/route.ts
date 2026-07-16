@@ -5,6 +5,7 @@ import { createClient } from '@insforge/sdk';
 import { countRetailApi, decodeCompanyId } from '@/lib/collect';
 import { countDeliveryApi } from '@/lib/collect-delivery';
 import { countWholesaleApi } from '@/lib/collect-wholesale';
+import { notifyWecom } from '@/lib/notify';
 
 const DUCKDB_URL = process.env.DUCKDB_URL || 'http://duckdb:9000';
 const AGENT_API_KEY = process.env.AGENT_API_KEY!;
@@ -49,5 +50,11 @@ export async function POST(req: Request) {
       results.push({ task: t.name, day, api: apiCount, lib: libCount, ok: apiCount >= 0 && libCount >= apiCount });
     }
   }
-  return NextResponse.json({ total: results.length, abnormal_count: results.filter(r => !r.ok).length, abnormal: results.filter(r => !r.ok), all: results });
+  const abnormal = results.filter(r => !r.ok);
+  if (abnormal.length) {
+    await notifyWecom('⚠️ 采集周对账异常', `${abnormal.length}/${results.length} 项异常（库<API）:\n${abnormal.slice(0, 15).map(x => `${x.task} ${x.day} API=${x.api} 库=${x.lib}`).join('\n')}`).catch(() => {});
+  } else {
+    await notifyWecom('✅ 采集周对账通过', `${results.length} 项全部对齐（库≥API）`).catch(() => {});
+  }
+  return NextResponse.json({ total: results.length, abnormal_count: abnormal.length, abnormal, all: results });
 }
