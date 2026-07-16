@@ -292,7 +292,7 @@ async function executeTask(task: {
       const mode: 'full' | 'incremental' =
         (watermark.date !== today || Date.now() - (watermark.last_full_ts || 0) >= 55 * 60 * 1000 || watermark.last_count == null) ? 'full' : 'incremental';
       // dtFrom/dtTo 带时分秒；full 回溯N天补延迟单据，incremental 当天增量
-      const lookback = params.lookback_days ?? 3;
+      const lookback = params.lookback_days ?? 1;
       const dates = params.date_mode === 'today'
         ? (mode === 'full' ? { from: `${getDateOffsetChina(-lookback)} 00:00:00`, to: `${today} 23:59:59` } : { from: `${today} 00:00:00`, to: `${today} 23:59:59` })
         : { from: `${getYesterdayChina()} 00:00:00`, to: `${getYesterdayChina()} 23:59:59` };
@@ -362,7 +362,7 @@ async function executeTask(task: {
       const watermarkLastCount: number = watermark.last_count || 0;
       const mode: 'full' | 'incremental' =
         (watermark.date !== today || Date.now() - (watermark.last_full_ts || 0) >= 55 * 60 * 1000 || watermark.last_count == null) ? 'full' : 'incremental';
-      const lookback = params.lookback_days ?? 3;
+      const lookback = params.lookback_days ?? 1;
       const dates = params.date_mode === 'today'
         ? (mode === 'full' ? { from: `${getDateOffsetChina(-lookback)} 00:00:00`, to: `${today} 23:59:59` } : { from: `${today} 00:00:00`, to: `${today} 23:59:59` })
         : { from: `${getYesterdayChina()} 00:00:00`, to: `${getYesterdayChina()} 23:59:59` };
@@ -433,7 +433,7 @@ async function executeTask(task: {
         ? 'full'
         : 'incremental';
     // dates：full 回溯N天(补延迟生成/审核的单据，按 bizday 分区去重)；incremental 当天增量(水位线续采尾部)
-    const lookback = params.lookback_days ?? 3;
+    const lookback = params.lookback_days ?? 1;
     const dates = params.date_mode === 'today'
       ? (mode === 'full' ? [getDateOffsetChina(-lookback), today] : [today, today])
       : (params.dates || [getYesterdayChina(), getYesterdayChina()]);

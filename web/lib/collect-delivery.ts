@@ -186,24 +186,25 @@ export async function collectDeliveryOnce(
 
   // offset 分页（从首页之后续采）
   let offset = firstRecords.length;
+  const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+  const randDelay = () => 800 + Math.floor(Math.random() * 1500); // 0.8~2.3秒随机间隔，模仿人避免被封锁
   let consecutiveErrors = 0;
-  const maxPages = 500;
-  let pages = 0;
-  while (offset < result.apiTotal && pages < maxPages) {
+  while (offset < result.apiTotal) {
     const bodyStr = buildBody(distributionBranch, dtFrom, dtTo, offset, limit);
     const pr = await callLemengApi(ENDPOINT_DETAIL, authToken, bodyStr, branchNumsStr);
     if (!pr.ok || String(pr.data?.code) !== '0') {
       console.error(`[collect-delivery] offset ${offset} error: ${pr.error || pr.data?.msg}`);
       consecutiveErrors++;
       if (consecutiveErrors >= 3) { result.error = `Consecutive 3 pages failed at offset ${offset}`; break; }
-      offset += limit; pages++; continue;
+      offset += limit; await sleep(randDelay()); continue;
     }
     consecutiveErrors = 0;
     const recs = pr.data?.data?.content || [];
     result.records.push(...recs);
     console.log(`[collect-delivery] offset ${offset}/${result.apiTotal}: +${recs.length}, total ${result.records.length}`);
-    offset += limit; pages++;
+    offset += limit;
     if (recs.length === 0) break;
+    if (offset < result.apiTotal) await sleep(randDelay());
   }
 
   // 落 Parquet：full 用 /transform 覆盖；incremental 用 /merge

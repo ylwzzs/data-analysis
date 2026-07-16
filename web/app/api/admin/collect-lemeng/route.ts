@@ -63,7 +63,7 @@ export async function POST(req: NextRequest) {
 
     const params = task.params || {};
     // 滚动回溯窗口：date_mode=today → [今天-lookback, 今天]，覆盖延迟生成/审核的单据（同天重采去重）
-    const lookback = params.lookback_days ?? 3;
+    const lookback = params.lookback_days ?? 1;
     const dates = params.date_mode === 'today'
       ? [getDateOffsetChina(-lookback), getTodayChina()]
       : (params.dates || [getYesterdayChina(), getYesterdayChina()]);

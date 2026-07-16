@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
     const branchNumsStr = '99';
     const limit = params.page_size || 200;
     const today = getTodayChina();
-    const lookback = params.lookback_days ?? 3;
+    const lookback = params.lookback_days ?? 1;
     const startD = (() => { const d = new Date(); const c = new Date(d.getTime() + 8 * 3600 * 1000); c.setDate(c.getDate() - lookback); return c.toISOString().slice(0, 10); })();
     const dates = params.date_mode === 'today'
       ? { from: `${startD} 00:00:00`, to: `${today} 23:59:59` }

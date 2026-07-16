@@ -252,7 +252,7 @@ export async function collectOnce(
     return result;
   }
 
-  // ===== 分页拉取（并行 batch，不截断；以 records>=apiTotal 判定结束）=====
+  // ===== 分页拉取（串行 + 随机间隔，模仿人避免被封锁；以 records>=apiTotal 判定结束）=====
   const totalPages = Math.ceil(result.apiTotal / pageSize);
   let startPage = 1;
   // 增量模式：总数未超水位线 → 无新增跳过；否则从水位线页（重叠 1 页兜底边界）续采尾部
@@ -265,32 +265,26 @@ export async function collectOnce(
     startPage = Math.max(1, Math.floor(watermarkLastCount / pageSize));
     console.log(`[collect] Incremental: resume from page ${startPage} (watermark ${watermarkLastCount}, total ${result.apiTotal})`);
   }
-  const parallelism = 5;
+  const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+  const randDelay = () => 800 + Math.floor(Math.random() * 1500); // 0.8~2.3秒随机间隔，模仿人避免高并发被封锁
   let page = startPage;
   let consecutiveErrors = 0;
 
   while (page <= totalPages) {
-    const batch: Promise<{ ok: boolean; data?: any; status?: number; error?: string }>[] = [];
-    for (let i = 0; i < parallelism && page <= totalPages; i++, page++) {
-      batch.push(callLemengApi(ENDPOINT_RETAIL_DETAIL, authToken, buildBody(branchNums, dates, page, pageSize), branchNumsStr));
+    const pr = await callLemengApi(ENDPOINT_RETAIL_DETAIL, authToken, buildBody(branchNums, dates, page, pageSize), branchNumsStr);
+    if (!pr.ok || pr.data?.code !== 0) {
+      consecutiveErrors++;
+      console.error(`[collect] Page ${page} error: ${pr.error || pr.data?.message}`);
+      if (consecutiveErrors >= 3) { result.error = `连续3页失败 at page ${page}`; break; }
+      page++; await sleep(randDelay()); continue;
     }
-    const results = await Promise.all(batch);
-    let batchRecords = 0;
-    for (const pr of results) {
-      if (!pr.ok || pr.data?.code !== 0) {
-        consecutiveErrors++;
-        console.error(`[collect] Page error: ${pr.error || pr.data?.message}`);
-        continue;
-      }
-      consecutiveErrors = 0;
-      const records = pr.data.result || [];
-      result.records.push(...records);
-      batchRecords += records.length;
-    }
-    console.log(`[collect] 进度: ${result.records.length}/${result.apiTotal} (本批${batchRecords})`);
-    if (consecutiveErrors >= parallelism * 2) { result.error = `连续多页失败，停止 at page ${page}`; break; }
-    if (result.records.length >= result.apiTotal) break; // 对账判定结束（替代旧的 maxPages 截断 + 单页<pageSize break）
-    if (batchRecords === 0) break; // 整批无数据（防死循环）
+    consecutiveErrors = 0;
+    const records = pr.data.result || [];
+    result.records.push(...records);
+    console.log(`[collect] Page ${page}/${totalPages}: +${records.length}, total ${result.records.length}/${result.apiTotal}`);
+    if (result.records.length >= result.apiTotal) break; // 对账判定结束
+    page++;
+    if (page <= totalPages) await sleep(randDelay()); // 随机间隔，避免高并发被封锁
   }
 
   // ===== 写入 Parquet：full 用 /transform 覆盖；incremental 用 /merge 合并 =====
