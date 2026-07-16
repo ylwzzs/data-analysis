@@ -36,6 +36,7 @@ export function MobileDashboard({
   freshness: string | null;
 }) {
   const [focus, setFocus] = useState<MetricCode>("sale");
+  console.log("[MobileDashboard] render");
   const cardRef = useRef<HTMLDivElement>(null);
 
   const kpiRow = kpi.find((k: any) => k.metric_code === focus);
