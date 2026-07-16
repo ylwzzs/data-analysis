@@ -9,6 +9,10 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: __dirname,
   },
+  // 禁 client router cache（RSC payload 缓存），避免跨设备(PC↔移动) stale RSC 致移动端 client navigation 先闪PC再切移动
+  experimental: {
+    staleTimes: { static: 30, dynamic: 0 },
+  },
 };
 
 export default nextConfig;
