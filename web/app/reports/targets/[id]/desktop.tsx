@@ -36,7 +36,6 @@ export function DesktopDashboard({
   freshness: string | null;
 }) {
   const [focus, setFocus] = useState<MetricCode>("sale");
-  console.log("[DesktopDashboard] render");
 
   const focusTrend = (trend[focus] ?? []).map((d: any) => ({
     date: d.date,
