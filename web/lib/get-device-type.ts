@@ -14,6 +14,7 @@ export async function getDeviceType(): Promise<"mobile" | "desktop"> {
   const headersList = await headers();
   const deviceFromHeader = headersList.get("x-device-type");
   if (deviceFromHeader === "mobile" || deviceFromHeader === "desktop") {
+    console.log("[getDeviceType] via x-device-type:", deviceFromHeader);
     return deviceFromHeader;
   }
 
@@ -21,10 +22,13 @@ export async function getDeviceType(): Promise<"mobile" | "desktop"> {
   const cookiesList = await cookies();
   const deviceFromCookie = cookiesList.get("device_type")?.value;
   if (deviceFromCookie === "mobile" || deviceFromCookie === "desktop") {
+    console.log("[getDeviceType] via cookie:", deviceFromCookie, "(x-device-type 缺失)");
     return deviceFromCookie;
   }
 
   // Fallback: UA 检测
   const ua = headersList.get("user-agent") || "";
-  return isMobileDevice(ua) ? "mobile" : "desktop";
+  const r = isMobileDevice(ua) ? "mobile" : "desktop";
+  console.log("[getDeviceType] via UA fallback:", r, "ua:", ua.slice(0, 80));
+  return r;
 }
