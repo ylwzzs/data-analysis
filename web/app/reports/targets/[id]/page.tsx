@@ -38,6 +38,10 @@ export default async function TargetDashboard({
     getBreakdown(targetId, "hq"),
   ]);
 
+  // 数据新鲜度：3 表最早 /compute 时间（updated_at min）
+  let freshness: string | null = null;
+  try { const fr = await client.database.rpc('get_data_freshness'); freshness = fr.data as unknown as string | null; } catch {}
+
   // 每个指标的趋势并行（outbound 走 delivery+wholesale 双查合并，失败降级空数组）
   const trendEntries = await Promise.all(METRIC_ORDER.map(async (code) => {
     const kr = kpi.find((k: any) => k.metric_code === code);
@@ -60,6 +64,7 @@ export default async function TargetDashboard({
       kpi={kpi}
       trend={trend}
       breakdown={{ store: breakdownStore, hq: breakdownHq }}
+      freshness={freshness}
     />
   ) : (
     <div className="mx-auto max-w-7xl p-6">
@@ -68,6 +73,7 @@ export default async function TargetDashboard({
         kpi={kpi}
         trend={trend}
         breakdown={{ store: breakdownStore, hq: breakdownHq }}
+        freshness={freshness}
       />
     </div>
   );

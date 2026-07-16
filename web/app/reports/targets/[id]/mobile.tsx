@@ -16,16 +16,24 @@ import { ShareButton } from "@/components/report-center/share-image";
 // ⚠️ focusRank 按 focus 分派（关键数据模型，同 desktop.tsx）：
 //   sale / delivery       → store breakdown（256 门店，门店级数据，Top/Bottom 8）
 //   outbound_amt / profit → hq breakdown（2 品类，品类级数据，无门店级，2 条）
+function fmtFresh(s: string | null) {
+  if (!s) return "—";
+  try { return new Date(s).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).replace(/\//g, "-"); }
+  catch { return s.slice(0, 16).replace("T", " "); }
+}
+
 export function MobileDashboard({
   target,
   kpi,
   trend,
   breakdown,
+  freshness,
 }: {
   target: any;
   kpi: any[];
   trend: Record<string, any>;
   breakdown: { store: any[]; hq: any[] };
+  freshness: string | null;
 }) {
   const [focus, setFocus] = useState<MetricCode>("sale");
   const cardRef = useRef<HTMLDivElement>(null);
@@ -66,6 +74,11 @@ export function MobileDashboard({
           targetRef={cardRef}
           filename={`${target.name}-${METRICS[focus].label}`}
         />
+      </div>
+
+      {/* 数据新鲜度 */}
+      <div className="text-xs tabular-nums text-slate-400 -mt-1">
+        {target.name} · 数据更新 {fmtFresh(freshness)}
       </div>
 
       {/* 指标切换器：pill 横滑 */}

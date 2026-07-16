@@ -16,16 +16,24 @@ import { RankChart } from "@/components/charts/rank-chart";
 // ⚠️ focusRank 按 focus 分派（关键数据模型）：
 //   sale / delivery       → store breakdown（256 门店，门店级数据）
 //   outbound_amt / profit → hq breakdown（2 品类，品类级数据，无门店级）
+function fmtFresh(s: string | null) {
+  if (!s) return "—";
+  try { return new Date(s).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).replace(/\//g, "-"); }
+  catch { return s.slice(0, 16).replace("T", " "); }
+}
+
 export function DesktopDashboard({
   target,
   kpi,
   trend,
   breakdown,
+  freshness,
 }: {
   target: any;
   kpi: any[];
   trend: Record<string, any>;
   breakdown: { store: any[]; hq: any[] };
+  freshness: string | null;
 }) {
   const [focus, setFocus] = useState<MetricCode>("sale");
 
@@ -72,7 +80,7 @@ export function DesktopDashboard({
           </span>
         </div>
         <div className="mt-0.5 text-xs tabular-nums text-slate-400">
-          {target.start_date} ~ {target.end_date}
+          {target.start_date} ~ {target.end_date} · 数据更新 {fmtFresh(freshness)}
         </div>
       </div>
 

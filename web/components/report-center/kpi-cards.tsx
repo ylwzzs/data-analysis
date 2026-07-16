@@ -86,7 +86,7 @@ export function KpiCards({
             </div>
             <div
               className={`mt-1 text-2xl font-semibold tabular-nums ${rateColor(
-                progress,
+                (r.achievement_rate ?? 0) / (progress || 0.0001),
               )}`}
             >
               {((r.achievement_rate ?? 0) * 100).toFixed(1)}%
