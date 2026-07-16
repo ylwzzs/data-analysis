@@ -301,7 +301,6 @@ async function executeTask(task: {
       // 对账驱动：新一天对账前一日；同一天每小时对账当天；其余纯增量
       const companyId = decodeCompanyId(authToken);
       const isNewDay = watermark.date !== today;
-      const needHourlyCheck = !isNewDay && (Date.now() - (watermark.last_full_ts || 0) >= 55 * 60 * 1000 || watermark.last_count == null);
       let mode: 'full' | 'incremental';
       if (isNewDay) {
         const prevDay = getDateOffsetChina(-1);
@@ -309,12 +308,6 @@ async function executeTask(task: {
         const libPrev = await duckdbParquetCount(`lemeng/transfer_detail/${companyId}/${prevDay.replace(/-/g, '')}/all.parquet`);
         mode = (apiPrev > 0 && libPrev >= apiPrev) ? 'incremental' : 'full';
         console.log(`[scheduler] ${task.name} 前一日对账 ${libPrev}/${apiPrev} → ${mode}`);
-      } else if (needHourlyCheck) {
-        const apiToday = await countDeliveryApi(authToken, distributionBranch, branchNumsStr, `${today} 00:00:00`, `${today} 23:59:59`);
-        const libToday = await duckdbParquetCount(`lemeng/transfer_detail/${companyId}/${today.replace(/-/g, '')}/all.parquet`);
-        mode = (apiToday === 0 || libToday >= apiToday) ? 'incremental' : 'full';
-        console.log(`[scheduler] ${task.name} 当天对账 ${libToday}/${apiToday} → ${mode}`);
-        if (mode === 'incremental') watermark.last_full_ts = Date.now();
       } else {
         mode = 'incremental';
       }
@@ -390,7 +383,6 @@ async function executeTask(task: {
       // 对账驱动：新一天对账前一日；同一天每小时对账当天；其余纯增量
       const companyId = decodeCompanyId(authToken);
       const isNewDay = watermark.date !== today;
-      const needHourlyCheck = !isNewDay && (Date.now() - (watermark.last_full_ts || 0) >= 55 * 60 * 1000 || watermark.last_count == null);
       let mode: 'full' | 'incremental';
       if (isNewDay) {
         const prevDay = getDateOffsetChina(-1);
@@ -398,12 +390,6 @@ async function executeTask(task: {
         const libPrev = await duckdbParquetCount(`lemeng/wholesale_detail/${companyId}/${prevDay.replace(/-/g, '')}/all.parquet`);
         mode = (apiPrev > 0 && libPrev >= apiPrev) ? 'incremental' : 'full';
         console.log(`[scheduler] ${task.name} 前一日对账 ${libPrev}/${apiPrev} → ${mode}`);
-      } else if (needHourlyCheck) {
-        const apiToday = await countWholesaleApi(authToken, branchNumsStr, `${today} 00:00:00`, `${today} 23:59:59`);
-        const libToday = await duckdbParquetCount(`lemeng/wholesale_detail/${companyId}/${today.replace(/-/g, '')}/all.parquet`);
-        mode = (apiToday === 0 || libToday >= apiToday) ? 'incremental' : 'full';
-        console.log(`[scheduler] ${task.name} 当天对账 ${libToday}/${apiToday} → ${mode}`);
-        if (mode === 'incremental') watermark.last_full_ts = Date.now();
       } else {
         mode = 'incremental';
       }
@@ -474,22 +460,16 @@ async function executeTask(task: {
     // 对账驱动：新一天对账前一日(通过 incremental / 失败 full)；同一天每小时对账当天；其余纯增量
     const companyId = decodeCompanyId(authToken);
     const isNewDay = watermark.date !== today;
-    const needHourlyCheck = !isNewDay && (Date.now() - (watermark.last_full_ts || 0) >= 55 * 60 * 1000 || watermark.last_count == null);
     let mode: 'full' | 'incremental';
     if (isNewDay) {
+      // 新一天：对账前一日（数据稳定不涨，对账准）；通过 incremental，失败 full 补
       const prevDay = getDateOffsetChina(-1);
       const apiPrev = await countRetailApi(authToken, branchNums, branchNumsStr, [prevDay, prevDay]);
       const libPrev = await duckdbParquetCount(`lemeng/retail_detail/${companyId}/${prevDay}/all.parquet`);
       mode = (apiPrev > 0 && libPrev >= apiPrev) ? 'incremental' : 'full';
       console.log(`[scheduler] ${task.name} 前一日对账 ${libPrev}/${apiPrev} → ${mode}`);
-    } else if (needHourlyCheck) {
-      const apiToday = await countRetailApi(authToken, branchNums, branchNumsStr, [today, today]);
-      const libToday = await duckdbParquetCount(`lemeng/retail_detail/${companyId}/${today}/all.parquet`);
-      mode = (apiToday === 0 || libToday >= apiToday) ? 'incremental' : 'full';
-      console.log(`[scheduler] ${task.name} 当天对账 ${libToday}/${apiToday} → ${mode}`);
-      if (mode === 'incremental') watermark.last_full_ts = Date.now();
     } else {
-      mode = 'incremental';
+      mode = 'incremental'; // 当天纯增量（API 实时涨，当天对账永远库<API 不准；漏了次日对账前一日兜底补）
     }
     // dates：full 回溯N天(补延迟生成/审核的单据，按 bizday 分区去重)；incremental 当天增量(水位线续采尾部)
     const lookback = params.lookback_days ?? 1;
