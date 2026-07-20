@@ -43,28 +43,28 @@
 目标服务器连接方式：
 
 ```
-ssh -i /Users/Duo/WPS\ 云文档/其他/ShanHai-OPS.pem root@data.shanhaiyiguo.com
+ssh -i ~/.ssh/ShanHai-OPS.pem root@data.shanhaiyiguo.com
 ```
 
-密钥文件：`/Users/Duo/WPS 云文档/其他/ShanHai-OPS.pem`
+密钥文件：`~/.ssh/ShanHai-OPS.pem`（源在企微 WeDrive「拖拉低代码平台/合同档案/其他/ShanHai-OPS.pem」，需复制到 `~/.ssh/` 并 `chmod 600`——WeDrive 挂载权限 0644 不满足 SSH 要求；旧路径 `/Users/Duo/WPS 云文档/...` 已废弃，WPS 客户端不再挂载）
 
 ### 常用操作
 
 ```bash
 # 连接服务器
-ssh -i "/Users/Duo/WPS 云文档/其他/ShanHai-OPS.pem" root@data.shanhaiyiguo.com
+ssh -i "~/.ssh/ShanHai-OPS.pem" root@data.shanhaiyiguo.com
 
 # 重启 InsForge 服务
-ssh -i "/Users/Duo/WPS 云文档/其他/ShanHai-OPS.pem" root@data.shanhaiyiguo.com "cd /opt/data-analytics-platform/deploy && docker compose restart insforge"
+ssh -i "~/.ssh/ShanHai-OPS.pem" root@data.shanhaiyiguo.com "cd /opt/data-analytics-platform/deploy && docker compose restart insforge"
 
 # 清理 Deno 缓存（用于更新 edge function）
-ssh -i "/Users/Duo/WPS 云文档/其他/ShanHai-OPS.pem" root@data.shanhaiyiguo.com "cd /opt/data-analytics-platform/deploy && docker exec deploy-deno-1 rm -rf /deno-dir/* && docker compose restart deno"
+ssh -i "~/.ssh/ShanHai-OPS.pem" root@data.shanhaiyiguo.com "cd /opt/data-analytics-platform/deploy && docker exec deploy-deno-1 rm -rf /deno-dir/* && docker compose restart deno"
 
 # 查看日志
-ssh -i "/Users/Duo/WPS 云文档/其他/ShanHai-OPS.pem" root@data.shanhaiyiguo.com "docker logs deploy-insforge-1 --tail 50"
+ssh -i "~/.ssh/ShanHai-OPS.pem" root@data.shanhaiyiguo.com "docker logs deploy-insforge-1 --tail 50"
 
 # 数据库操作
-ssh -i "/Users/Duo/WPS 云文档/其他/ShanHai-OPS.pem" root@data.shanhaiyiguo.com "docker exec deploy-postgres-1 psql -U postgres -d insforge -c '<SQL>'"
+ssh -i "~/.ssh/ShanHai-OPS.pem" root@data.shanhaiyiguo.com "docker exec deploy-postgres-1 psql -U postgres -d insforge -c '<SQL>'"
 ```
 
 ## 部署流程
@@ -90,14 +90,14 @@ ssh -i "/Users/Duo/WPS 云文档/其他/ShanHai-OPS.pem" root@data.shanhaiyiguo.
 
 1. SSH 到服务器，直调 InsForge API PUT 更新（与 `deploy-functions.sh` 的 deploy_one 同款；MCP 连本地 dev 改不到生产）
    ```bash
-   ssh -i "/Users/Duo/WPS 云文档/其他/ShanHai-OPS.pem" root@data.shanhaiyiguo.com 'cd /opt/data-analytics-platform/deploy && set -a; . ./.env; set +a
+   ssh -i "~/.ssh/ShanHai-OPS.pem" root@data.shanhaiyiguo.com 'cd /opt/data-analytics-platform/deploy && set -a; . ./.env; set +a
    body=$(jq -n --arg slug "<function-name>" --arg name "<function-name>" --arg desc "<function-name>" --rawfile code "$PWD/../functions/<function-name>/index.js" "{slug:\$slug,name:\$name,description:\$desc,code:\$code,status:\"active\"}")
    curl -sf -X PUT -H "Authorization: Bearer $INSFORGE_API_KEY" -H "Content-Type: application/json" -d "$body" http://localhost:7130/api/functions/<function-name>'
    ```
 
 2. 清理 Deno 缓存使更新生效（**关键，否则跑旧代码**）
    ```bash
-   ssh -i "/Users/Duo/WPS 云文档/其他/ShanHai-OPS.pem" root@data.shanhaiyiguo.com "cd /opt/data-analytics-platform/deploy && docker exec deploy-deno-1 rm -rf /deno-dir/* && docker compose restart deno"
+   ssh -i "~/.ssh/ShanHai-OPS.pem" root@data.shanhaiyiguo.com "cd /opt/data-analytics-platform/deploy && docker exec deploy-deno-1 rm -rf /deno-dir/* && docker compose restart deno"
    ```
 
 3. 验证 function 生效
@@ -150,14 +150,14 @@ ssh -i "/Users/Duo/WPS 云文档/其他/ShanHai-OPS.pem" root@data.shanhaiyiguo.
 
 3. **数据库验证**
    ```bash
-   ssh -i "/Users/Duo/WPS 云文档/其他/ShanHai-OPS.pem" root@data.shanhaiyiguo.com "docker exec deploy-postgres-1 psql -U postgres -d insforge -c 'SELECT * FROM org_users;'"
+   ssh -i "~/.ssh/ShanHai-OPS.pem" root@data.shanhaiyiguo.com "docker exec deploy-postgres-1 psql -U postgres -d insforge -c 'SELECT * FROM org_users;'"
    ```
 
 ## 常见问题
 
 ### Deno 缓存导致 function 不更新
 ```bash
-ssh -i "/Users/Duo/WPS 云文档/其他/ShanHai-OPS.pem" root@data.shanhaiyiguo.com "cd /opt/data-analytics-platform/deploy && docker exec deploy-deno-1 rm -rf /deno-dir/* && docker compose restart deno"
+ssh -i "~/.ssh/ShanHai-OPS.pem" root@data.shanhaiyiguo.com "cd /opt/data-analytics-platform/deploy && docker exec deploy-deno-1 rm -rf /deno-dir/* && docker compose restart deno"
 ```
 
 ### function secret 解密失败（注入空串把 function 搞崩）
@@ -166,13 +166,13 @@ deno 日志出现 `Failed to decrypt secret <NAME>` = 该 secret 是用历史 `E
 - 根因：`ENCRYPTION_KEY` 曾被改动 / 曾靠留空回退 `JWT_SECRET`（现已改必填）。
 - 治愈：`deploy-functions.sh` 的 `set_secret` 已是 **upsert**（POST 409→PUT），重跑即用当前 key 把全部 secret 重加密一遍：
   ```bash
-  ssh -i "/Users/Duo/WPS 云文档/其他/ShanHai-OPS.pem" root@data.shanhaiyiguo.com "cd /opt/data-analytics-platform && bash scripts/deploy-functions.sh"
+  ssh -i "~/.ssh/ShanHai-OPS.pem" root@data.shanhaiyiguo.com "cd /opt/data-analytics-platform && bash scripts/deploy-functions.sh"
   ```
 - 死 secret（无 function 读取的历史残留，如 `INSFORGE_API_KEY`）解密也会报错，确认无引用后 `DELETE /api/secrets/<KEY>` 清掉。
 
 ### 数据库权限问题
 ```bash
-ssh -i "/Users/Duo/WPS 云文档/其他/ShanHai-OPS.pem" root@data.shanhaiyiguo.com "docker exec deploy-postgres-1 psql -U postgres -d insforge -c 'GRANT INSERT, SELECT, UPDATE ON org_users, org_departments TO anon, authenticated;'"
+ssh -i "~/.ssh/ShanHai-OPS.pem" root@data.shanhaiyiguo.com "docker exec deploy-postgres-1 psql -U postgres -d insforge -c 'GRANT INSERT, SELECT, UPDATE ON org_users, org_departments TO anon, authenticated;'"
 ```
 
 ### 重新登录获取姓名

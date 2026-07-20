@@ -5,28 +5,28 @@
 目标服务器连接方式：
 
 ```
-ssh -i /Users/Duo/WPS\ 云文档/其他/ShanHai-OPS.pem root@data.shanhaiyiguo.com
+ssh -i ~/.ssh/ShanHai-OPS.pem root@data.shanhaiyiguo.com
 ```
 
-密钥文件：`/Users/Duo/WPS 云文档/其他/ShanHai-OPS.pem`
+密钥文件：`~/.ssh/ShanHai-OPS.pem`
 
 ### 常用操作
 
 ```bash
 # 连接服务器
-ssh -i "/Users/Duo/WPS 云文档/其他/ShanHai-OPS.pem" root@data.shanhaiyiguo.com
+ssh -i "~/.ssh/ShanHai-OPS.pem" root@data.shanhaiyiguo.com
 
 # 重启 InsForge 服务
-ssh -i "/Users/Duo/WPS 云文档/其他/ShanHai-OPS.pem" root@data.shanhaiyiguo.com "cd /opt/data-analytics-platform/deploy && docker compose restart insforge"
+ssh -i "~/.ssh/ShanHai-OPS.pem" root@data.shanhaiyiguo.com "cd /opt/data-analytics-platform/deploy && docker compose restart insforge"
 
 # 清理 Deno 缓存（用于更新 edge function）
-ssh -i "/Users/Duo/WPS 云文档/其他/ShanHai-OPS.pem" root@data.shanhaiyiguo.com "cd /opt/data-analytics-platform/deploy && docker exec deploy-deno-1 rm -rf /deno-dir/* && docker compose restart deno"
+ssh -i "~/.ssh/ShanHai-OPS.pem" root@data.shanhaiyiguo.com "cd /opt/data-analytics-platform/deploy && docker exec deploy-deno-1 rm -rf /deno-dir/* && docker compose restart deno"
 
 # 查看日志
-ssh -i "/Users/Duo/WPS 云文档/其他/ShanHai-OPS.pem" root@data.shanhaiyiguo.com "docker logs deploy-insforge-1 --tail 50"
+ssh -i "~/.ssh/ShanHai-OPS.pem" root@data.shanhaiyiguo.com "docker logs deploy-insforge-1 --tail 50"
 
 # 数据库操作
-ssh -i "/Users/Duo/WPS 云文档/其他/ShanHai-OPS.pem" root@data.shanhaiyiguo.com "docker exec deploy-postgres-1 psql -U postgres -d insforge -c '<SQL>'"
+ssh -i "~/.ssh/ShanHai-OPS.pem" root@data.shanhaiyiguo.com "docker exec deploy-postgres-1 psql -U postgres -d insforge -c '<SQL>'"
 ```
 
 ## 🔴 质量控制规范（必须执行）
@@ -82,7 +82,7 @@ bash scripts/check-functions.sh && cd web && npm run lint && npx tsc --noEmit
    mcp__insforge__update_function --slug <function-name> --codeFile functions/<function-name>/index.js
    
    # 清理 Deno 缓存使更新生效
-   ssh -i "/Users/Duo/WPS 云文档/其他/ShanHai-OPS.pem" root@data.shanhaiyiguo.com "cd /opt/data-analytics-platform/deploy && docker exec deploy-deno-1 rm -rf /deno-dir/* && docker compose restart deno"
+   ssh -i "~/.ssh/ShanHai-OPS.pem" root@data.shanhaiyiguo.com "cd /opt/data-analytics-platform/deploy && docker exec deploy-deno-1 rm -rf /deno-dir/* && docker compose restart deno"
    ```
 
 2. **否则推送到 GitHub 触发 CI/CD**
@@ -128,7 +128,7 @@ bash scripts/check-functions.sh && cd web && npm run lint && npx tsc --noEmit
 
 3. **数据库验证**
    ```bash
-   ssh -i "/Users/Duo/WPS 云文档/其他/ShanHai-OPS.pem" root@data.shanhaiyiguo.com "docker exec deploy-postgres-1 psql -U postgres -d insforge -c 'SELECT * FROM org_users;'"
+   ssh -i "~/.ssh/ShanHai-OPS.pem" root@data.shanhaiyiguo.com "docker exec deploy-postgres-1 psql -U postgres -d insforge -c 'SELECT * FROM org_users;'"
    ```
 
 ## 常见问题
@@ -146,12 +146,12 @@ cd web && npm run lint && npx tsc --noEmit
 
 ### Deno 缓存导致 function 不更新
 ```bash
-ssh -i "/Users/Duo/WPS 云文档/其他/ShanHai-OPS.pem" root@data.shanhaiyiguo.com "cd /opt/data-analytics-platform/deploy && docker exec deploy-deno-1 rm -rf /deno-dir/* && docker compose restart deno"
+ssh -i "~/.ssh/ShanHai-OPS.pem" root@data.shanhaiyiguo.com "cd /opt/data-analytics-platform/deploy && docker exec deploy-deno-1 rm -rf /deno-dir/* && docker compose restart deno"
 ```
 
 ### 数据库权限问题
 ```bash
-ssh -i "/Users/Duo/WPS 云文档/其他/ShanHai-OPS.pem" root@data.shanhaiyiguo.com "docker exec deploy-postgres-1 psql -U postgres -d insforge -c 'GRANT INSERT, SELECT, UPDATE ON org_users, org_departments TO anon, authenticated;'"
+ssh -i "~/.ssh/ShanHai-OPS.pem" root@data.shanhaiyiguo.com "docker exec deploy-postgres-1 psql -U postgres -d insforge -c 'GRANT INSERT, SELECT, UPDATE ON org_users, org_departments TO anon, authenticated;'"
 ```
 
 ### 重新登录获取姓名
