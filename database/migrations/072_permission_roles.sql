@@ -153,4 +153,223 @@ WHERE NOT EXISTS (SELECT 1 FROM dept_role_mapping m WHERE m.dept_id=d.id AND m.r
 -- ============================================================
 REVOKE INSERT, UPDATE, DELETE ON retail_query_user_perms FROM anon, authenticated;
 
+-- ============================================================
+-- ⑨ claim_match_or_star(claim, value)：Task 3 RLS 复用的「["*"] 放行 / 否则 IN」辅助函数
+--   语义（设计文档 §7.1）：claim 缺失/空/含 "*" → 放行 true；否则 value ∈ claim 数组
+--   幂等：CREATE OR REPLACE；IMMUTABLE（仅依赖入参，可被 RLS / 索引使用）
+-- ============================================================
+CREATE OR REPLACE FUNCTION claim_match_or_star(p_claim JSONB, p_value TEXT) RETURNS BOOLEAN
+LANGUAGE plpgsql IMMUTABLE AS $$
+DECLARE
+  v_type TEXT;
+BEGIN
+  -- 缺 claim（NULL / 非数组 JSON）→ 放行（零爆炸半径，兼容旧 token）
+  IF p_claim IS NULL OR p_value IS NULL THEN RETURN true; END IF;
+  v_type := jsonb_typeof(p_claim);
+  IF v_type IS NULL OR v_type = 'null' OR v_type <> 'array' THEN RETURN true; END IF;
+  -- 空数组 → 放行
+  IF jsonb_array_length(p_claim) = 0 THEN RETURN true; END IF;
+  -- 通配 ["*"] → 放行
+  IF p_claim @> '"*"'::jsonb THEN RETURN true; END IF;
+  -- 精确匹配：value 是否落在 claim 数组里
+  RETURN p_claim @> jsonb_build_array(p_value);
+END;
+$$;
+COMMENT ON FUNCTION claim_match_or_star IS 'RLS 四维过滤辅助：claim 缺失/空/含 "*" 放行，否则 value ∈ claim';
+
+-- ============================================================
+-- ⑩ get_user_perms 升级（四维合并 + 临时授权 + UI 字段）
+--   设计文档 §5 合并优先级：个人 override（最高） > 角色 ∪ 部门
+--   返回结构（设计文档 §5 / §6.1）：
+--     {role_code, branch_nums, brands, categories, can_see_cost,
+--      default_landing, default_metric, visible_panels}
+--   分支兜底：
+--     - 用户不存在/已禁用 → 全 ["*"] 放行（RLS 缺 claim 放行原则一致）
+--     - 用户无 role_id → 角色 UI 字段为 null；数据维度走部门层 + 个人 override
+--     - 无任何维度数据 → 维度兜底为 ["*"]（防御性，正常场景不会命中）
+--   临时授权：所有 subject_type='user' 条目按 (expires_at IS NULL OR expires_at > NOW()) 过滤后聚合
+--   幂等：CREATE OR REPLACE；SECURITY DEFINER + SET search_path（覆盖 015/016 的 VARCHAR 实现）
+--   签名：保持 VARCHAR（与 015/016 一致；VARCHAR/TEXT 在 PG 等价，避免重载导致旧迁移 COMMENT 歧义）
+--   Breaking change：旧结构 {user_id,user_name,branch_nums,can_see_cost} → 调用方（wecom-oauth/agent-query）在 Task 4/5 适配
+-- ============================================================
+-- 清理一次性的 TEXT 重载孤儿（早期迭代时 072 曾用 TEXT 签名，与 VARCHAR 在 PG 重载解析里不等价，
+-- 留下会让 015/016 的 `COMMENT ON FUNCTION get_user_perms`（无签名）歧义报错；正常 dev 库此 DROP 是 no-op）
+DROP FUNCTION IF EXISTS get_user_perms(TEXT);
+CREATE OR REPLACE FUNCTION get_user_perms(p_wecom_id VARCHAR) RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_role_id INT;
+  v_dept_ids JSONB;
+  v_role_code TEXT;
+  v_role_landing TEXT;
+  v_role_metric TEXT;
+  v_role_panels JSONB := '[]'::jsonb;
+  v_role_branch JSONB := '[]'::jsonb;
+  v_role_brands JSONB := '[]'::jsonb;
+  v_role_cats  JSONB := '[]'::jsonb;
+  v_role_cost  BOOLEAN := false;
+  v_dept_branch JSONB := '[]'::jsonb;
+  v_dept_cost   BOOLEAN := false;
+  v_user_branch JSONB := '[]'::jsonb;
+  v_user_brands JSONB := '[]'::jsonb;
+  v_user_cats   JSONB := '[]'::jsonb;
+  v_user_cost   BOOLEAN := false;
+  v_has_user    BOOLEAN := false;
+  v_out_branch JSONB;
+  v_out_brands JSONB;
+  v_out_cats   JSONB;
+  v_out_cost   BOOLEAN;
+BEGIN
+  -- 0) 找用户 + 角色绑定 + 部门
+  SELECT u.role_id, u.department_ids
+    INTO v_role_id, v_dept_ids
+  FROM org_users u
+  WHERE u.wecom_id = p_wecom_id AND u.is_active;
+
+  IF NOT FOUND THEN
+    -- 兜底：用户不存在/已禁用 → 全 ["*"] 放行（零爆炸半径，与 RLS 缺 claim 放行一致）
+    RETURN jsonb_build_object(
+      'role_code', null,
+      'branch_nums', '["*"]'::jsonb,
+      'brands', '["*"]'::jsonb,
+      'categories', '["*"]'::jsonb,
+      'can_see_cost', false,
+      'default_landing', null,
+      'default_metric', null,
+      'visible_panels', '[]'::jsonb
+    );
+  END IF;
+
+  -- 1) 角色底座：UI 字段 + data_permissions(subject_type='role')
+  IF v_role_id IS NOT NULL THEN
+    SELECT r.code, r.default_landing, r.default_metric, r.visible_panels
+      INTO v_role_code, v_role_landing, v_role_metric, v_role_panels
+    FROM roles r
+    WHERE r.id = v_role_id AND r.is_active;
+
+    SELECT coalesce(jsonb_agg(DISTINCT n.e), '[]'::jsonb)
+      INTO v_role_branch
+    FROM data_permissions dp
+    CROSS JOIN LATERAL jsonb_array_elements_text(coalesce(dp.branch_nums, '[]'::jsonb)) AS n(e)
+    WHERE dp.subject_type = 'role' AND dp.subject_id = v_role_id::text
+      AND (dp.expires_at IS NULL OR dp.expires_at > NOW());
+
+    SELECT coalesce(jsonb_agg(DISTINCT n.e), '[]'::jsonb)
+      INTO v_role_brands
+    FROM data_permissions dp
+    CROSS JOIN LATERAL jsonb_array_elements_text(coalesce(dp.brands, '[]'::jsonb)) AS n(e)
+    WHERE dp.subject_type = 'role' AND dp.subject_id = v_role_id::text
+      AND (dp.expires_at IS NULL OR dp.expires_at > NOW());
+
+    SELECT coalesce(jsonb_agg(DISTINCT n.e), '[]'::jsonb)
+      INTO v_role_cats
+    FROM data_permissions dp
+    CROSS JOIN LATERAL jsonb_array_elements_text(coalesce(dp.categories, '[]'::jsonb)) AS n(e)
+    WHERE dp.subject_type = 'role' AND dp.subject_id = v_role_id::text
+      AND (dp.expires_at IS NULL OR dp.expires_at > NOW());
+
+    SELECT coalesce(bool_or(dp.can_see_cost), false) INTO v_role_cost
+    FROM data_permissions dp
+    WHERE dp.subject_type = 'role' AND dp.subject_id = v_role_id::text
+      AND (dp.expires_at IS NULL OR dp.expires_at > NOW());
+  END IF;
+
+  -- 2) 部门补充：org_departments.branch_nums / can_see_cost 聚合（并集 / 任一 true）
+  IF v_dept_ids IS NOT NULL
+     AND jsonb_typeof(v_dept_ids) = 'array'
+     AND jsonb_array_length(v_dept_ids) > 0 THEN
+    SELECT coalesce(jsonb_agg(DISTINCT n.e), '[]'::jsonb),
+           coalesce(bool_or(d.can_see_cost), false)
+      INTO v_dept_branch, v_dept_cost
+    FROM org_departments d
+    CROSS JOIN LATERAL jsonb_array_elements_text(coalesce(d.branch_nums, '[]'::jsonb)) AS n(e)
+    WHERE d.id::text IN (SELECT jsonb_array_elements_text(v_dept_ids))
+      AND d.is_active;
+  END IF;
+
+  -- 3) 个人 override（subject_type='user'，含临时授权）：聚合所有生效条目
+  SELECT count(*) > 0 INTO v_has_user
+  FROM data_permissions dp
+  WHERE dp.subject_type = 'user' AND dp.subject_id = p_wecom_id
+    AND (dp.expires_at IS NULL OR dp.expires_at > NOW());
+
+  IF v_has_user THEN
+    SELECT coalesce(jsonb_agg(DISTINCT n.e), '[]'::jsonb)
+      INTO v_user_branch
+    FROM data_permissions dp
+    CROSS JOIN LATERAL jsonb_array_elements_text(coalesce(dp.branch_nums, '[]'::jsonb)) AS n(e)
+    WHERE dp.subject_type = 'user' AND dp.subject_id = p_wecom_id
+      AND (dp.expires_at IS NULL OR dp.expires_at > NOW());
+
+    SELECT coalesce(jsonb_agg(DISTINCT n.e), '[]'::jsonb)
+      INTO v_user_brands
+    FROM data_permissions dp
+    CROSS JOIN LATERAL jsonb_array_elements_text(coalesce(dp.brands, '[]'::jsonb)) AS n(e)
+    WHERE dp.subject_type = 'user' AND dp.subject_id = p_wecom_id
+      AND (dp.expires_at IS NULL OR dp.expires_at > NOW());
+
+    SELECT coalesce(jsonb_agg(DISTINCT n.e), '[]'::jsonb)
+      INTO v_user_cats
+    FROM data_permissions dp
+    CROSS JOIN LATERAL jsonb_array_elements_text(coalesce(dp.categories, '[]'::jsonb)) AS n(e)
+    WHERE dp.subject_type = 'user' AND dp.subject_id = p_wecom_id
+      AND (dp.expires_at IS NULL OR dp.expires_at > NOW());
+
+    SELECT coalesce(bool_or(dp.can_see_cost), false) INTO v_user_cost
+    FROM data_permissions dp
+    WHERE dp.subject_type = 'user' AND dp.subject_id = p_wecom_id
+      AND (dp.expires_at IS NULL OR dp.expires_at > NOW());
+  END IF;
+
+  -- 4) 合并输出：个人命中 → 个人；否则 角色 ∪ 部门
+  IF v_has_user THEN
+    v_out_branch := v_user_branch;
+    v_out_brands := v_user_brands;
+    v_out_cats   := v_user_cats;
+    v_out_cost   := v_user_cost;
+  ELSE
+    -- branch_nums: 角色 ∪ 部门（去重；含 "*" → 全放行）
+    SELECT coalesce(jsonb_agg(DISTINCT e), '[]'::jsonb)
+      INTO v_out_branch
+    FROM jsonb_array_elements_text(v_role_branch || v_dept_branch) AS e;
+    -- brands / categories: 仅角色层（部门无 brand/category 维度，设计文档 §4.4 保留部门仅作 branch+cost 补充）
+    v_out_brands := v_role_brands;
+    v_out_cats   := v_role_cats;
+    -- can_see_cost: 角色 OR 部门
+    v_out_cost   := v_role_cost OR v_dept_cost;
+  END IF;
+
+  -- 含 "*" → 收敛为单一 ["*"]（避免 ["*", "1", "2"] 这种冗余表示）
+  IF v_out_branch @> '"*"'::jsonb THEN v_out_branch := '["*"]'::jsonb; END IF;
+  IF v_out_brands @> '"*"'::jsonb THEN v_out_brands := '["*"]'::jsonb; END IF;
+  IF v_out_cats   @> '"*"'::jsonb THEN v_out_cats   := '["*"]'::jsonb; END IF;
+
+  -- 维度空数组兜底为 ["*"]（防御性；schema DEFAULT '["*"]' 下不应命中）
+  IF jsonb_array_length(v_out_branch) = 0 THEN v_out_branch := '["*"]'::jsonb; END IF;
+  IF jsonb_array_length(v_out_brands) = 0 THEN v_out_brands := '["*"]'::jsonb; END IF;
+  IF jsonb_array_length(v_out_cats)   = 0 THEN v_out_cats   := '["*"]'::jsonb; END IF;
+
+  RETURN jsonb_build_object(
+    'role_code',       v_role_code,
+    'branch_nums',     v_out_branch,
+    'brands',          v_out_brands,
+    'categories',      v_out_cats,
+    'can_see_cost',    v_out_cost,
+    'default_landing', v_role_landing,
+    'default_metric',  v_role_metric,
+    'visible_panels',  v_role_panels
+  );
+END;
+$$;
+COMMENT ON FUNCTION get_user_perms(VARCHAR) IS '权限合并 RPC：个人 override（最高） > 角色 ∪ 部门；含临时授权时效判定；返回四维 + 角色 UI 字段';
+
+-- ============================================================
+-- ⑪ 权限授予（anon/authenticated；网关与登录流用 service key 调）
+-- ============================================================
+GRANT EXECUTE ON FUNCTION claim_match_or_star(JSONB, TEXT) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION get_user_perms(VARCHAR) TO anon, authenticated;
+
 COMMIT;
