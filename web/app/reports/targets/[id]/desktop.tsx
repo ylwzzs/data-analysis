@@ -11,8 +11,21 @@ import { CategorySummaryRow } from "@/lib/report-center/category-summary";
 
 function fmtFresh(s: string | null) {
   if (!s) return "—";
-  try { return new Date(s).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).replace(/\//g, "-"); }
-  catch { return s.slice(0, 16).replace("T", " "); }
+  try {
+    return new Date(s)
+      .toLocaleString("zh-CN", {
+        timeZone: "Asia/Shanghai",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      })
+      .replace(/\//g, "-");
+  } catch {
+    return s.slice(0, 16).replace("T", " ");
+  }
 }
 
 export function DesktopDashboard({
@@ -58,7 +71,8 @@ export function DesktopDashboard({
           </span>
         </div>
         <div className="mt-0.5 text-xs tabular-nums text-slate-400">
-          {target.start_date} ~ {target.end_date} · 数据更新 {fmtFresh(freshness)}
+          {target.start_date} ~ {target.end_date} · 数据更新{" "}
+          {fmtFresh(freshness)}
         </div>
       </div>
 

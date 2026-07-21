@@ -40,12 +40,14 @@ export default async function TargetDashboard({
 
   // 数据新鲜度：3 表最早 /compute 时间（updated_at min）
   let freshness: string | null = null;
-  try { const fr = await client.database.rpc('get_data_freshness'); freshness = fr.data as unknown as string | null; } catch {}
+  try {
+    const fr = await client.database.rpc("get_data_freshness");
+    freshness = fr.data as unknown as string | null;
+  } catch {}
 
   // 计算时间进度
-  const progress = t.days_elapsed && t.total_days
-    ? t.days_elapsed / t.total_days
-    : 0;
+  const progress =
+    t.days_elapsed && t.total_days ? t.days_elapsed / t.total_days : 0;
 
   // 提取月份
   const targetMonth = new Date(t.start_date).getMonth() + 1;

@@ -20,7 +20,10 @@ export default async function Loading() {
         {/* 指标 tab */}
         <div className="flex gap-2 overflow-hidden">
           {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="h-7 w-16 shrink-0 animate-pulse rounded-full bg-slate-200" />
+            <div
+              key={i}
+              className="h-7 w-16 shrink-0 animate-pulse rounded-full bg-slate-200"
+            />
           ))}
         </div>
         {/* GaugeChart 达成 */}
@@ -53,7 +56,10 @@ export default async function Loading() {
           {/* KPI 4 卡 */}
           <div className="grid grid-cols-4 gap-3">
             {[1, 2, 3, 4].map((i) => (
-              <div key={i} className="h-24 animate-pulse rounded-md border border-slate-200 bg-white" />
+              <div
+                key={i}
+                className="h-24 animate-pulse rounded-md border border-slate-200 bg-white"
+              />
             ))}
           </div>
           {/* 趋势 + 排行 2:1 */}
