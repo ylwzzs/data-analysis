@@ -189,7 +189,11 @@
 
 **数据来源**：
 - 后端新建视图 `report_category_summary_v`
-- 从 `report_daily_delivery` + `report_daily_wholesale` 按 category 字段聚合
+- 从 `report_daily_delivery` + `report_daily_wholesale` 按 `category_group` 字段聚合
+- 商品类别映射（已存在于数据库）：
+  - 生鲜 → 水果
+  - 标品 + 废弃档案 + 广西柳州 → 标品
+  - 包装耗材 + 运费/仓储用耗材 → 耗材
 
 #### 3.4.2 战区门店出库报表
 
@@ -229,7 +233,8 @@
 
 **数据来源**：
 - 后端新建视图 `report_wholesale_customer_breakdown_v`
-- 从 `report_daily_wholesale` 按 customer_name 聚合
+- 从 `report_daily_wholesale` 按 `customer_name` 聚合
+- 过滤规则：`branch_num` 不是 64188 门店的记录（匹配 64188 的门店属于门店配送，其他属于批发客户）
 
 ---
 
@@ -720,12 +725,15 @@ Edge Function（send-store-alert / send-warehouse-alert）
 
 ### 6.1 后端迁移
 
+**Phase 1-2**：
 1. 创建视图 `report_region_breakdown_v`
 2. 创建视图 `report_product_sale_top20_v`
 3. 创建视图 `report_category_summary_v`
 4. 创建视图 `report_branch_delivery_breakdown_v`
 5. 创建视图 `report_wholesale_customer_breakdown_v`
 6. 创建视图 `report_product_delivery_top20_v`
+
+**Phase 3**（预警机制，后续版本）：
 7. 配置企微 webhook secret（`WECOM_ALERT_WEBHOOK`）
 8. 创建 Edge Function `send-store-alert`
 9. 创建 Edge Function `send-warehouse-alert`
@@ -754,10 +762,12 @@ Edge Function（send-store-alert / send-warehouse-alert）
 **Phase 2**（扩展功能）：
 - 第三部分：销售商品 TOP20
 - 第四部分 4.2：战区门店出库报表
+- 第四部分 4.3：外部批发客户出库报表
 - 第五部分：出库商品 TOP20
 
-**Phase 3**（预警机制）：
+**Phase 3**（预警机制，后续版本）：
 - 第六部分：门店预警 + 仓库出库预警
+- 需要先确认客单量数据源、企微群 webhook URL
 
 ---
 
@@ -772,13 +782,28 @@ Edge Function（send-store-alert / send-warehouse-alert）
 3. **企微 webhook 限流**：频繁推送可能被企微限流
    - 缓解：合并多条预警为一条消息，避免短时间多次推送
 
-### 7.2 待办
+### 7.2 已确认项
 
-1. 确认批发客户数据源字段（`customer_name` 是否存在于 `report_daily_wholesale`）
-2. 确认商品类别字段（`category` 是否存在于 `dim_item`）
-3. 确认门店预警的客单量数据源（是否需要采集客单量数据）
-4. 确认预警推送的具体企微群（需要 webhook URL）
-5. 确认「查看全部」跳转的明细页路由（是否需要新建页面）
+1. **批发客户数据源** ✅
+   - 字段：`report_daily_wholesale` 表的 `customer_name` 字段
+   - 过滤规则：`branch_num` 不是 64188 门店的记录（匹配 64188 的门店属于门店配送，其他属于批发客户）
+
+2. **商品类别映射** ✅
+   - 字段：`category_group` 字段已存在于 `report_daily_delivery` 和 `report_daily_wholesale`
+   - 映射关系（来源：`067_category_three_class.sql`）：
+     - 生鲜 → 水果
+     - 标品 + 废弃档案 + 广西柳州 → 标品
+     - 包装耗材 + 运费/仓储用耗材 → 耗材
+   - 数据库中已有三类：水果、标品、耗材
+
+3. **预警机制优先级调整** ✅
+   - 预警机制（第六部分）放到 Phase 4 或后续版本
+   - 客单量数据源需后续确认，暂不实现
+
+### 7.3 待办
+
+1. 确认「查看全部」跳转的明细页路由（是否需要新建页面）
+2. 确认预警推送的具体企微群（Phase 4 前需要 webhook URL）
 
 ---
 
