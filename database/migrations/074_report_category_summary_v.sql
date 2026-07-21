@@ -1,0 +1,127 @@
+-- 074_report_category_summary_v.sql
+-- 类别出库报表视图（水果/标品/耗材/合计）
+-- 幂等: DROP VIEW IF EXISTS + CREATE VIEW
+-- 部署后需重启 postgrest: docker compose restart postgrest
+
+DROP VIEW IF EXISTS report_category_summary_v;
+
+CREATE VIEW report_category_summary_v AS
+WITH
+-- 目标基础数据（总部目标，category IS NULL）
+target_base AS (
+  SELECT
+    t.id AS target_id,
+    t.start_date,
+    t.end_date,
+    (t.end_date - t.start_date + 1) AS total_days,
+    GREATEST(LEAST(current_date, t.end_date) - t.start_date + 1, 0) AS days_elapsed
+  FROM targets t
+  WHERE t.status = 'active'
+    AND t.target_level = 'total'  -- 总部目标
+    AND t.category IS NULL
+),
+
+-- 出库金额目标
+outbound_amt_targets AS (
+  SELECT tmv.target_id, tmv.target_value AS sale_target
+  FROM target_metric_values tmv
+  WHERE tmv.metric_code = 'outbound_amt'
+),
+
+-- 出库毛利目标
+outbound_profit_targets AS (
+  SELECT tmv.target_id, tmv.target_value AS profit_target
+  FROM target_metric_values tmv
+  WHERE tmv.metric_code = 'outbound_profit'
+),
+
+-- 出库实际值（按类别聚合）
+category_actuals AS (
+  -- delivery 数据
+  SELECT
+    tb.target_id,
+    d.category_group AS category,
+    SUM(d.out_money) AS sale_actual,
+    SUM(d.profit_money) AS profit_actual,
+    SUM(CASE WHEN d.biz_date = tb.start_date + tb.days_elapsed - 1 THEN d.out_money ELSE 0 END) AS daily_amount,
+    SUM(CASE WHEN d.biz_date = tb.start_date + tb.days_elapsed - 1 THEN d.profit_money ELSE 0 END) AS daily_profit
+  FROM report_daily_delivery d
+  JOIN target_base tb ON d.biz_date BETWEEN tb.start_date AND tb.end_date
+  WHERE d.system_book_code = '64188'
+    AND d.category_group IN ('水果', '标品', '耗材')
+  GROUP BY tb.target_id, d.category_group
+
+  UNION ALL
+
+  -- wholesale 数据（批发客户，非 64188 门店）
+  SELECT
+    tb.target_id,
+    w.category_group AS category,
+    SUM(w.wholesale_money) AS sale_actual,
+    SUM(w.wholesale_profit) AS profit_actual,
+    SUM(CASE WHEN w.biz_date = tb.start_date + tb.days_elapsed - 1 THEN w.wholesale_money ELSE 0 END) AS daily_amount,
+    SUM(CASE WHEN w.biz_date = tb.start_date + tb.days_elapsed - 1 THEN w.wholesale_profit ELSE 0 END) AS daily_profit
+  FROM report_daily_wholesale w
+  JOIN target_base tb ON w.biz_date BETWEEN tb.start_date AND tb.end_date
+  WHERE w.system_book_code = '64188'
+    AND w.branch_num != '64188'  -- 排除匹配到 64188 门店的记录（门店配送）
+    AND w.category_group IN ('水果', '标品', '耗材')
+  GROUP BY tb.target_id, w.category_group
+),
+
+-- 类别层（水果/标品/耗材）
+category_level AS (
+  SELECT
+    tb.target_id,
+    ca.category,
+    COALESCE(oat.sale_target, 0) AS sale_target,
+    ca.sale_actual,
+    CASE WHEN oat.sale_target > 0 THEN ROUND(ca.sale_actual / oat.sale_target, 4) ELSE NULL END AS sale_rate,
+    COALESCE(opt.profit_target, 0) AS profit_target,
+    ca.profit_actual,
+    CASE WHEN opt.profit_target > 0 THEN ROUND(ca.profit_actual / opt.profit_target, 4) ELSE NULL END AS profit_rate,
+    CASE WHEN ca.sale_actual > 0 THEN ROUND(ca.profit_actual / ca.sale_actual, 4) ELSE NULL END AS profit_margin,
+    ca.daily_amount,
+    ca.daily_profit,
+    CASE WHEN ca.daily_amount > 0 THEN ROUND(ca.daily_profit / ca.daily_amount, 4) ELSE NULL END AS daily_profit_margin,
+    CASE
+      WHEN tb.days_elapsed < tb.total_days AND opt.profit_target > 0
+      THEN ROUND((opt.profit_target - ca.profit_actual) / (tb.total_days - tb.days_elapsed), 2)
+      ELSE 0
+    END AS remaining_daily_profit_target
+  FROM target_base tb
+  CROSS JOIN (VALUES ('水果'), ('标品'), ('耗材')) AS cats(category)
+  LEFT JOIN outbound_amt_targets oat ON oat.target_id = tb.target_id
+  LEFT JOIN outbound_profit_targets opt ON opt.target_id = tb.target_id
+  LEFT JOIN category_actuals ca ON ca.target_id = tb.target_id AND ca.category = cats.category
+),
+
+-- 合计层
+total_level AS (
+  SELECT
+    target_id,
+    '合计' AS category,
+    SUM(sale_target) AS sale_target,
+    SUM(sale_actual) AS sale_actual,
+    CASE WHEN SUM(sale_target) > 0 THEN ROUND(SUM(sale_actual) / SUM(sale_target), 4) ELSE NULL END AS sale_rate,
+    SUM(profit_target) AS profit_target,
+    SUM(profit_actual) AS profit_actual,
+    CASE WHEN SUM(profit_target) > 0 THEN ROUND(SUM(profit_actual) / SUM(profit_target), 4) ELSE NULL END AS profit_rate,
+    CASE WHEN SUM(sale_actual) > 0 THEN ROUND(SUM(profit_actual) / SUM(sale_actual), 4) ELSE NULL END AS profit_margin,
+    SUM(daily_amount) AS daily_amount,
+    SUM(daily_profit) AS daily_profit,
+    CASE WHEN SUM(daily_amount) > 0 THEN ROUND(SUM(daily_profit) / SUM(daily_amount), 4) ELSE NULL END AS daily_profit_margin,
+    SUM(remaining_daily_profit_target) AS remaining_daily_profit_target
+  FROM category_level
+  GROUP BY target_id
+)
+
+SELECT * FROM category_level
+UNION ALL
+SELECT * FROM total_level;
+
+ALTER VIEW report_category_summary_v OWNER TO postgres;
+ALTER VIEW report_category_summary_v SET (security_invoker = true);
+GRANT SELECT ON report_category_summary_v TO authenticated, anon;
+
+DO $$ BEGIN RAISE NOTICE 'Migration 074 completed: report_category_summary_v created'; END $$;
