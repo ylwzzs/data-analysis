@@ -372,4 +372,45 @@ COMMENT ON FUNCTION get_user_perms(VARCHAR) IS '权限合并 RPC：个人 overri
 GRANT EXECUTE ON FUNCTION claim_match_or_star(JSONB, TEXT) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION get_user_perms(VARCHAR) TO anon, authenticated;
 
+-- ============================================================
+-- ⑫ 重建 report_daily_sales_v / report_daily_category_v 加四维过滤（设计文档 §7.1）
+--   维度：branch_nums（门店）+ brands（system_book_code 品牌）+ categories（品类，仅 category_v）+ can_see_cost（成本脱敏 CASE）
+--   语义：
+--     - current_setting('request.jwt.claims.<key>', true) 缺失/不在 token 中 → 返回 NULL
+--     - claim_match_or_star(NULL, ...) → 放行 true（零爆炸半径，旧 token 不破坏）
+--     - claim 为 ["*"] 或空数组 → 放行
+--     - 否则 value ∈ claim 数组才可见
+--   脱敏：total_profit 按 can_see_cost boolean 决定（沿用 045 的 CASE 模式，生产有效）
+--   幂等：视图用 DROP+CREATE（CLAUDE.md 坑：CREATE OR REPLACE 给视图加列后重跑报 cannot drop columns from view）
+--   行级安全：security_invoker=true → 视图以调用者身份运行，叠加基表 RLS（report_rls_branch_nums）双层过滤
+-- ============================================================
+DROP VIEW IF EXISTS report_daily_sales_v;
+CREATE VIEW report_daily_sales_v AS
+SELECT s.biz_date, s.system_book_code, s.branch_num, s.branch_name,
+       s.total_orders, s.total_items, s.total_sale,
+       CASE WHEN COALESCE(current_setting('request.jwt.claims.can_see_cost', true)::boolean, false)
+            THEN s.total_profit ELSE NULL END AS total_profit
+FROM report_daily_sales s
+WHERE claim_match_or_star(current_setting('request.jwt.claims.branch_nums', true)::jsonb, s.branch_num::text)
+  AND claim_match_or_star(current_setting('request.jwt.claims.brands', true)::jsonb, s.system_book_code);
+ALTER VIEW report_daily_sales_v OWNER TO postgres;
+ALTER VIEW report_daily_sales_v SET (security_invoker = true);
+COMMENT ON VIEW report_daily_sales_v IS '每日门店销售汇总安全视图：四维过滤(branch_nums+brands+can_see_cost 脱敏)；claim 缺失=放行兜底';
+GRANT SELECT ON report_daily_sales_v TO authenticated, anon;
+
+DROP VIEW IF EXISTS report_daily_category_v;
+CREATE VIEW report_daily_category_v AS
+SELECT c.biz_date, c.system_book_code, c.branch_num, c.category,
+       c.total_items, c.total_sale,
+       CASE WHEN COALESCE(current_setting('request.jwt.claims.can_see_cost', true)::boolean, false)
+            THEN c.total_profit ELSE NULL END AS total_profit
+FROM report_daily_category c
+WHERE claim_match_or_star(current_setting('request.jwt.claims.branch_nums', true)::jsonb, c.branch_num::text)
+  AND claim_match_or_star(current_setting('request.jwt.claims.brands', true)::jsonb, c.system_book_code)
+  AND claim_match_or_star(current_setting('request.jwt.claims.categories', true)::jsonb, c.category::text);
+ALTER VIEW report_daily_category_v OWNER TO postgres;
+ALTER VIEW report_daily_category_v SET (security_invoker = true);
+COMMENT ON VIEW report_daily_category_v IS '每日门店品类汇总安全视图：四维过滤(branch_nums+brands+categories+can_see_cost 脱敏)；claim 缺失=放行兜底';
+GRANT SELECT ON report_daily_category_v TO authenticated, anon;
+
 COMMIT;
