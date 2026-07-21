@@ -19,7 +19,8 @@ function rateColor(rate: number | null, progress: number): string {
   return rate >= 1 ? "text-green-600" : rate >= 0.8 ? "text-amber-600" : "text-red-600";
 }
 
-function fmtCurrency(v: number): string {
+function fmtCurrency(v: number | null | undefined): string {
+  if (v == null) return "—";
   return v >= 10000 ? `¥${(v / 10000).toFixed(1)}万` : `¥${v.toFixed(0)}`;
 }
 

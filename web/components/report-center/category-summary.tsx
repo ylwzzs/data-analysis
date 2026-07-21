@@ -14,7 +14,8 @@ function marginColor(margin: number | null): string {
   return margin < 0.12 ? "text-red-600" : "text-slate-700";
 }
 
-function fmtCurrency(v: number): string {
+function fmtCurrency(v: number | null | undefined): string {
+  if (v == null) return "—";
   return v >= 10000 ? `¥${(v / 10000).toFixed(1)}万` : `¥${v.toFixed(0)}`;
 }
 
