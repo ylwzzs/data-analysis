@@ -107,13 +107,46 @@ module.exports = async function (req) {
     const departmentIds = user?.department_ids || [];
     const userName = user?.name || wecomUserId;  // 如果没有姓名则用 userid
 
-    // 4. 签发 access_token（role=authenticated，携带部门信息）
+    // 4. 调 get_user_perms 拿合并后权限（角色 role_code + 四维 + UI 配置）
+    //    RPC 由 Task 2 建在数据库，返回 JSONB：缺字段不致命，兜底走全权/最小 UI。
+    //    失败时 perms={} → claim 全部走兜底，登录不能因权限查询失败而挂。
+    const apiBase = Deno.env.get("INSFORGE_API_BASE") || "http://insforge:7130";
+    const anonKey = Deno.env.get("ANON_KEY");
+    let perms = {};
+    try {
+      const permRes = await fetch(`${apiBase}/rest/v1/rpc/get_user_perms`, {
+        method: "POST",
+        headers: {
+          apikey: anonKey,
+          Authorization: `Bearer ${anonKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ p_wecom_id: wecomUserId }),
+      });
+      if (permRes.ok) perms = await permRes.json() || {};
+    } catch (e) {
+      console.error("get_user_perms failed", e);
+    }
+
+    // 5. 签发 access_token（role=authenticated，携带部门 + 权限 claim）
+    //    claim 八字段从 perms 读，缺字段兜底保证旧用户/新用户都能登录：
+    //      role_code=null（前端再走默认）、四维默认全权 ['*']、
+    //      can_see_cost=false（敏感默认拒绝）、UI 默认值最小可用。
     const now = Math.floor(Date.now() / 1000);
     const accessToken = await signJwt(
       {
         sub: wecomUserId,
         role: "authenticated",
-        departments: departmentIds,  // 新增：部门 ID 数组
+        departments: departmentIds,  // 部门 ID 数组（兼容旧字段）
+        // 权限 claim（Task 4 新增）
+        role_code: perms.role_code ?? null,
+        branch_nums: perms.branch_nums || ["*"],
+        brands: perms.brands || ["*"],
+        categories: perms.categories || ["*"],
+        can_see_cost: perms.can_see_cost ?? false,
+        default_landing: perms.default_landing || "/",
+        default_metric: perms.default_metric || "sale",
+        visible_panels: perms.visible_panels || [],
         iss: "wecom-oauth",
         iat: now,
         exp: now + 7 * 86400,
