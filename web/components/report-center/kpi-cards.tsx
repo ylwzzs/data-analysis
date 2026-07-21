@@ -15,6 +15,14 @@ function fmtWan(v: number) {
   return v >= 10000 ? (v / 10000).toFixed(1) + "万" : v.toFixed(0);
 }
 
+function fmtCurrency(v: number): string {
+  return `¥${fmtWan(v)}`;
+}
+
+function fmtPercent(r: number): string {
+  return `${(r * 100).toFixed(1)}%`;
+}
+
 // 达成率三色编码（DESIGN 语义色），按 progress_rate 着色：
 //   >=1   → success #16A34A（跑赢进度）
 //   >=0.8 → warning #D97706（接近）
@@ -37,8 +45,31 @@ function statusBadgeClass(s: string) {
   return m[s] ?? m.not_ready;
 }
 
+// Tooltip 组件
+function KpiTooltip({ target, actual, rate }: { target: string; actual: string; rate: string }) {
+  return (
+    <div className="absolute z-10 hidden group-hover:block bg-white border border-slate-200 rounded shadow-lg p-2 text-xs min-w-[140px]">
+      <div className="space-y-1 tabular-nums">
+        <div className="flex justify-between">
+          <span className="text-slate-500">总目标</span>
+          <span className="text-slate-700 font-medium">{target}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-slate-500">总完成</span>
+          <span className="text-slate-700 font-medium">{actual}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-slate-500">完成率</span>
+          <span className="text-slate-700 font-medium">{rate}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // 4 指标 KPI 卡行：每卡显示 label / 达成率大数字 / 实际·目标·进度 / 数据状态徽章。
 // 点击 onFocus 切聚焦；聚焦卡 border-blue-500 ring-1（DESIGN primary）。
+// hover 显示 tooltip：总目标、总完成、完成率。
 export function KpiCards({
   rows,
   focus,
@@ -68,7 +99,7 @@ export function KpiCards({
             key={code}
             type="button"
             onClick={() => onFocus(code)}
-            className={`rounded-md border p-4 text-left transition ${
+            className={`rounded-md border p-4 text-left transition relative group ${
               isFocus
                 ? "border-blue-500 ring-1 ring-blue-500"
                 : "border-slate-200 bg-white hover:border-slate-300"
@@ -95,6 +126,12 @@ export function KpiCards({
               {fmtWan(r.actual_value ?? 0)} / {fmtWan(r.target_value)} · 进度{" "}
               {(progress * 100).toFixed(0)}%
             </div>
+            {/* Tooltip */}
+            <KpiTooltip
+              target={fmtCurrency(r.target_value)}
+              actual={fmtCurrency(r.actual_value ?? 0)}
+              rate={fmtPercent(r.achievement_rate ?? 0)}
+            />
           </button>
         );
       })}
