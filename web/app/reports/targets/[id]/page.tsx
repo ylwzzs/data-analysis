@@ -3,8 +3,8 @@ import { notFound } from "next/navigation";
 import { getDeviceType } from "@/lib/get-device-type";
 import { getClient } from "@/lib/api";
 import { getTargetKpi } from "@/lib/report-center/targets";
-import { getBreakdown, getTrend } from "@/lib/report-center/achievement";
-import { METRIC_ORDER } from "@/lib/report-center/metric-source";
+import { getRegionBreakdown } from "@/lib/report-center/region-breakdown";
+import { getCategorySummary } from "@/lib/report-center/category-summary";
 import { Header } from "@/components/layout/header";
 import { Sidebar } from "@/components/layout/sidebar";
 import { DesktopDashboard } from "./desktop";
@@ -32,38 +32,32 @@ export default async function TargetDashboard({
   if (!totalRows?.length) notFound();
   const t = totalRows[0];
 
-  const [kpi, breakdownStore, breakdownHq] = await Promise.all([
+  const [kpi, regionBreakdown, categorySummary] = await Promise.all([
     getTargetKpi(targetId),
-    getBreakdown(targetId, "store"),
-    getBreakdown(targetId, "hq"),
+    getRegionBreakdown(id),
+    getCategorySummary(id),
   ]);
 
   // 数据新鲜度：3 表最早 /compute 时间（updated_at min）
   let freshness: string | null = null;
   try { const fr = await client.database.rpc('get_data_freshness'); freshness = fr.data as unknown as string | null; } catch {}
 
-  // 每个指标的趋势并行（outbound 走 delivery+wholesale 双查合并，失败降级空数组）
-  const trendEntries = await Promise.all(METRIC_ORDER.map(async (code) => {
-    const kr = kpi.find((k: any) => k.metric_code === code);
-    if (!kr) return [code, []] as const;
-    try {
-      const t2 = await getTrend({
-        system_book_code: t.system_book_code, branch_num: t.branch_num, category: t.category,
-        start_date: t.start_date, end_date: t.end_date, target_value: kr.target_value, metric_code: code,
-      });
-      return [code, t2] as const;
-    } catch {
-      return [code, []] as const;
-    }
-  }));
-  const trend: Record<string, any> = Object.fromEntries(trendEntries);
+  // 计算时间进度
+  const progress = t.days_elapsed && t.total_days
+    ? t.days_elapsed / t.total_days
+    : 0;
+
+  // 提取月份
+  const targetMonth = new Date(t.start_date).getMonth() + 1;
 
   const dashboard = isMobile ? (
     <MobileDashboard
       target={t}
       kpi={kpi}
-      trend={trend}
-      breakdown={{ store: breakdownStore, hq: breakdownHq }}
+      regionBreakdown={regionBreakdown}
+      categorySummary={categorySummary}
+      progress={progress}
+      targetMonth={targetMonth}
       freshness={freshness}
     />
   ) : (
@@ -71,8 +65,10 @@ export default async function TargetDashboard({
       <DesktopDashboard
         target={t}
         kpi={kpi}
-        trend={trend}
-        breakdown={{ store: breakdownStore, hq: breakdownHq }}
+        regionBreakdown={regionBreakdown}
+        categorySummary={categorySummary}
+        progress={progress}
+        targetMonth={targetMonth}
         freshness={freshness}
       />
     </div>

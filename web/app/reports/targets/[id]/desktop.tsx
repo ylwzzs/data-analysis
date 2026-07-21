@@ -1,21 +1,14 @@
 "use client";
 
-import { useState } from "react";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 
-import { METRICS, MetricCode } from "@/lib/report-center/metric-source";
 import { KpiCards } from "@/components/report-center/kpi-cards";
-import { CrossTable } from "@/components/report-center/cross-table";
-import { LineChart } from "@/components/charts/line-chart";
-import { RankChart } from "@/components/charts/rank-chart";
+import { RegionDrillTable } from "@/components/report-center/region-drill-table";
+import { CategorySummary } from "@/components/report-center/category-summary";
+import { RegionBreakdownRow } from "@/lib/report-center/region-breakdown";
+import { CategorySummaryRow } from "@/lib/report-center/category-summary";
 
-// PC 看板：头部（返回 + 目标名 + 周期 + 状态徽章）+ 4 KPI 卡 + 趋势/排行 2:1 grid。
-// focus 切换驱动趋势与排行。
-//
-// ⚠️ focusRank 按 focus 分派（关键数据模型）：
-//   sale / delivery       → store breakdown（256 门店，门店级数据）
-//   outbound_amt / profit → hq breakdown（2 品类，品类级数据，无门店级）
 function fmtFresh(s: string | null) {
   if (!s) return "—";
   try { return new Date(s).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).replace(/\//g, "-"); }
@@ -25,35 +18,20 @@ function fmtFresh(s: string | null) {
 export function DesktopDashboard({
   target,
   kpi,
-  trend,
-  breakdown,
+  regionBreakdown,
+  categorySummary,
+  progress,
+  targetMonth,
   freshness,
 }: {
   target: any;
   kpi: any[];
-  trend: Record<string, any>;
-  breakdown: { store: any[]; hq: any[] };
+  regionBreakdown: RegionBreakdownRow[];
+  categorySummary: CategorySummaryRow[];
+  progress: number;
+  targetMonth: number;
   freshness: string | null;
 }) {
-  const [focus, setFocus] = useState<MetricCode>("sale");
-
-  const focusTrend = (trend[focus] ?? []).map((d: any) => ({
-    date: d.date,
-    cum_actual: d.cum_actual,
-    target_line: d.target_line,
-  }));
-
-  // focusRank 分派：sale/delivery→门店；outbound→品类
-  const focusIsStore = focus === "sale" || focus === "delivery";
-  const rankRows = (focusIsStore ? breakdown.store : breakdown.hq) ?? [];
-  const focusRank = rankRows
-    .filter((r: any) => r.metric_code === focus)
-    .map((r: any) => ({
-      name: focusIsStore ? r.branch_name || r.branch_num : r.category,
-      rate: r.achievement_rate ?? 0,
-    }))
-    .slice(0, focusIsStore ? 15 : 2);
-
   return (
     <div className="space-y-5">
       {/* 头部 */}
@@ -84,26 +62,18 @@ export function DesktopDashboard({
         </div>
       </div>
 
-      {/* KPI 卡 */}
-      <KpiCards rows={kpi} focus={focus} onFocus={setFocus} />
+      {/* KPI 卡（保留 focus 切换但不影响下方组件） */}
+      <KpiCards rows={kpi} focus="sale" onFocus={() => {}} />
 
-      {/* 趋势 + 排行 */}
-      <div className="grid grid-cols-3 gap-4">
-        <div className="col-span-2 rounded-lg border border-slate-200 bg-white p-4">
-          <h3 className="mb-2 text-sm font-medium text-slate-700">
-            累计达成趋势 · {METRICS[focus].label}
-          </h3>
-          {focusTrend.length > 0 ? <LineChart data={focusTrend} /> : <div className="text-center text-slate-400 py-8 text-sm">暂无数据</div>}
-        </div>
-        <div className="rounded-lg border border-slate-200 bg-white p-4">
-          <h3 className="mb-2 text-sm font-medium text-slate-700">
-            {focusIsStore ? "门店" : "品类"}达成排行 · {METRICS[focus].label}
-          </h3>
-          {focusRank.length > 0 ? <RankChart data={focusRank} /> : <div className="text-center text-slate-400 py-8 text-sm">暂无数据</div>}
-        </div>
-      </div>
-      {/* 门店 × 指标 交叉表：列动态（store breakdown 仅 sale/delivery） */}
-      <CrossTable rows={breakdown.store} />
+      {/* 门店零售/出库数据报表 */}
+      <RegionDrillTable
+        rows={regionBreakdown}
+        targetMonth={targetMonth}
+        progress={progress}
+      />
+
+      {/* 类别出库报表 */}
+      <CategorySummary rows={categorySummary} targetMonth={targetMonth} />
     </div>
   );
 }
