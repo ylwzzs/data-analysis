@@ -33,7 +33,6 @@ interface TreeNode {
   level: 'region' | 'sub_region' | 'store';
   children: TreeNode[];
   data: RegionBreakdownRow;
-  expanded: boolean;
 }
 
 export function RegionDrillTable({ rows, targetMonth, progress }: RegionDrillTableProps) {
@@ -54,7 +53,6 @@ export function RegionDrillTable({ rows, targetMonth, progress }: RegionDrillTab
           level: 'region',
           children: [],
           data: r,
-          expanded: expandedNodes.has(r.region_code),
         });
       }
     }
@@ -68,7 +66,6 @@ export function RegionDrillTable({ rows, targetMonth, progress }: RegionDrillTab
           level: 'sub_region',
           children: [],
           data: r,
-          expanded: expandedNodes.has(r.sub_region_code!),
         };
         subRegionMap.set(r.sub_region_code!, node);
         const parent = regionMap.get(r.parent_code);
@@ -85,7 +82,6 @@ export function RegionDrillTable({ rows, targetMonth, progress }: RegionDrillTab
           level: 'store',
           children: [],
           data: r,
-          expanded: false,
         };
         storeMap.set(r.branch_num!, node);
         const parent = subRegionMap.get(r.parent_code);
@@ -104,7 +100,7 @@ export function RegionDrillTable({ rows, targetMonth, progress }: RegionDrillTab
     }
 
     return [...regionMap.values()].sort((a, b) => (b.data.sale_rate ?? 0) - (a.data.sale_rate ?? 0));
-  }, [rows, expandedNodes]);
+  }, [rows]);
 
   const toggleExpand = (code: string) => {
     setExpandedNodes((prev) => {
