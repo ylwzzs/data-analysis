@@ -1,6 +1,7 @@
 -- 073_report_region_breakdown_v.sql
 -- 门店零售/出库数据报表下钻视图（大区→小区→门店三层）
 -- 幂等: DROP VIEW IF EXISTS + CREATE VIEW
+-- 部署后需重启 postgrest: docker compose restart postgrest
 
 -- 视图逻辑：
 -- 1. 从 targets + target_metric_values 获取目标值
