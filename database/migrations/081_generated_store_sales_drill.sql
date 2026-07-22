@@ -14,7 +14,7 @@ CREATE VIEW report_store_sales_drill_v AS
     SUM(s.total_profit) / NULLIF(SUM(s.total_sale), 0) AS margin
   FROM report_daily_sales s
   JOIN dim_branch dim ON s.branch_num = dim.branch_num AND s.system_book_code = dim.system_book_code
-  JOIN targets t ON s.system_book_code = t.system_book_code
+  JOIN targets t ON (t.system_book_code = 'ALL' OR s.system_book_code = t.system_book_code)
     AND s.biz_date BETWEEN t.start_date AND t.end_date
   WHERE t.status = 'active' AND s.system_book_code = '64188' AND is_assessed_war_zone(dim.first_level_region)
   GROUP BY t.id, dim.first_level_region, dim.first_level_region
@@ -30,7 +30,7 @@ UNION ALL
     SUM(s.total_profit) / NULLIF(SUM(s.total_sale), 0) AS margin
   FROM report_daily_sales s
   JOIN dim_branch dim ON s.branch_num = dim.branch_num AND s.system_book_code = dim.system_book_code
-  JOIN targets t ON s.system_book_code = t.system_book_code
+  JOIN targets t ON (t.system_book_code = 'ALL' OR s.system_book_code = t.system_book_code)
     AND s.biz_date BETWEEN t.start_date AND t.end_date
   WHERE t.status = 'active' AND s.system_book_code = '64188' AND is_assessed_war_zone(dim.first_level_region)
   GROUP BY t.id, dim.first_level_region, dim.second_level_region, dim.second_level_region
@@ -46,7 +46,7 @@ UNION ALL
     SUM(s.total_profit) / NULLIF(SUM(s.total_sale), 0) AS margin
   FROM report_daily_sales s
   JOIN dim_branch dim ON s.branch_num = dim.branch_num AND s.system_book_code = dim.system_book_code
-  JOIN targets t ON s.system_book_code = t.system_book_code
+  JOIN targets t ON (t.system_book_code = 'ALL' OR s.system_book_code = t.system_book_code)
     AND s.biz_date BETWEEN t.start_date AND t.end_date
   WHERE t.status = 'active' AND s.system_book_code = '64188' AND is_assessed_war_zone(dim.first_level_region)
   GROUP BY t.id, dim.second_level_region, dim.branch_num, dim.branch_name;

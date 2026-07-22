@@ -121,7 +121,7 @@ function genLevelBranch(view, level, parentLevel, baseMetrics, model, dim, sourc
   from += `\n  JOIN ${dim.join_table} dim ON s.branch_num = dim.${dim.join_key} AND s.system_book_code = dim.system_book_code`;
   const where = [];
   if (view.target_scoped) {
-    from += `\n  JOIN targets t ON s.system_book_code = t.system_book_code\n    AND s.biz_date BETWEEN t.start_date AND t.end_date`;
+    from += `\n  JOIN targets t ON (t.system_book_code = 'ALL' OR s.system_book_code = t.system_book_code)\n    AND s.biz_date BETWEEN t.start_date AND t.end_date`;
     where.push("t.status = 'active'");
   }
   if (sourceFilter) where.push(sourceFilter);
@@ -204,13 +204,23 @@ async function main() {
   const model = await readModel(client);
   await client.end();
 
-  let num = nextMigrationNum();
+  let nextNum = null;
   for (const view of manifest.views) {
     const sql = genViewSql(view, model);
-    const fname = `${String(num).padStart(3, "0")}_generated_${view.name}.sql`;
+    // 重生成时覆盖同名 generated 文件（保持编号）；无则新建
+    const existing = fs
+      .readdirSync(MIGRATIONS_DIR)
+      .find((f) => f.endsWith(`_generated_${view.name}.sql`));
+    let fname;
+    if (existing) {
+      fname = existing;
+    } else {
+      if (nextNum === null) nextNum = nextMigrationNum();
+      fname = `${String(nextNum).padStart(3, "0")}_generated_${view.name}.sql`;
+      nextNum++;
+    }
     fs.writeFileSync(path.join(MIGRATIONS_DIR, fname), sql);
-    console.log(`✓ generated database/migrations/${fname}`);
-    num++;
+    console.log(`✓ ${existing ? "updated" : "generated"} database/migrations/${fname}`);
   }
 }
 
