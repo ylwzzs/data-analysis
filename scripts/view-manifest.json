@@ -1,0 +1,13 @@
+{
+  "views": [
+    {
+      "name": "store_sales_drill",
+      "metrics": ["sale_amount", "sale_profit", "margin"],
+      "dimension": "branch",
+      "levels": ["region", "sub_region", "store"],
+      "assessed_filter": true,
+      "target_scoped": true,
+      "audit": true
+    }
+  ]
+}
