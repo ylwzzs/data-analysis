@@ -37,6 +37,19 @@ async function readModel(client) {
   return { metrics: metrics.rows, sources: sources.rows, levels: levels.rows, dims: dims.rows };
 }
 
+// pg JSONB 通常直接返回 JS 数组；兼容历史字串
+function normDeps(d) {
+  if (Array.isArray(d)) return d;
+  if (typeof d === "string") {
+    try {
+      return JSON.parse(d);
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
 // 校验：所有 base 指标必须同源（A2 单源限制）
 function validateView(view, model) {
   const baseMetrics = view.metrics
@@ -56,7 +69,7 @@ function validateView(view, model) {
 }
 
 // 生成单层 UNION 分支
-function genLevelBranch(view, level, parentLevel, baseMetrics, model, dim) {
+function genLevelBranch(view, level, parentLevel, baseMetrics, model, dim, sourceTable) {
   const src = (code) => model.sources.find((s) => s.metric_code === code);
   const cols = [];
   cols.push(`'${level.level_code}' AS level`);
@@ -65,20 +78,47 @@ function genLevelBranch(view, level, parentLevel, baseMetrics, model, dim) {
   cols.push(`dim.${level.key_column} AS code`);
   cols.push(`dim.${level.name_column} AS name`);
 
+  // 1) base 可加指标：直接 SUM 源列
   for (const m of baseMetrics) {
     cols.push(`SUM(s.${src(m.metric_code).source_column}) AS ${m.metric_code}`);
   }
 
-  // 同源 derived 比率：margin = profit/amount（重算，不直接 SUM）
-  const profitSrc = src("sale_profit") || src("delivery_profit") || src("wholesale_profit");
-  const amountSrc = src("sale_amount") || src("delivery_amount") || src("wholesale_amount");
-  if (view.metrics.includes("margin") && profitSrc && amountSrc) {
-    cols.push(`SUM(s.${profitSrc.source_column}) / NULLIF(SUM(s.${amountSrc.source_column}), 0) AS margin`);
+  // 2) derived 非可加比率（如 margin=profit/amount）：不可直接 SUM，须按 metric_registry.depends_on 重算
+  //    按 view 的单一 sourceTable 定位列（view-scoped，避免 delivery 视图误取 sale 列）
+  const derivedRatios = view.metrics
+    .map((c) => model.metrics.find((m) => m.metric_code === c))
+    .filter((m) => m && m.measure_type === "derived" && !m.additive);
+  for (const dm of derivedRatios) {
+    const deps = normDeps(dm.depends_on);
+    if (deps.length !== 2) {
+      throw new Error(`视图 ${view.name}: derived 指标 ${dm.metric_code} depends_on=[${deps.join(",")}]，生成器当前仅支持二元比率（须恰好 2 依赖）`);
+    }
+    // 依赖须是本视图已声明的 base 指标（保证口径一致且不静默丢弃）
+    for (const d of deps) {
+      if (!baseMetrics.some((b) => b.metric_code === d)) {
+        throw new Error(`视图 ${view.name}: derived 指标 ${dm.metric_code} 的依赖 ${d} 未在视图 metrics 中声明为 base 指标`);
+      }
+    }
+    const [numCode, denCode] = deps;
+    const numSrc = model.sources.find((s) => s.metric_code === numCode && s.source_table === sourceTable);
+    const denSrc = model.sources.find((s) => s.metric_code === denCode && s.source_table === sourceTable);
+    if (!numSrc || !denSrc) {
+      throw new Error(`视图 ${view.name}: derived 指标 ${dm.metric_code} 依赖 (${deps.join(",")}) 在源表 ${sourceTable} 未全部映射，无法重算`);
+    }
+    cols.push(`SUM(s.${numSrc.source_column}) / NULLIF(SUM(s.${denSrc.source_column}), 0) AS ${dm.metric_code}`);
+  }
+
+  // 3) 兜底：声明的 derived 可加指标（如 outbound_*）跨多源，A2 单源生成器暂不支持 → 显式报错，不静默丢弃
+  const unresolved = view.metrics
+    .map((c) => model.metrics.find((m) => m.metric_code === c))
+    .filter((m) => m && m.measure_type === "derived" && m.additive);
+  if (unresolved.length) {
+    throw new Error(`视图 ${view.name}: derived 可加指标 [${unresolved.map((u) => u.metric_code).join(",")}] 跨多源，A2 单源生成器暂不支持`);
   }
 
   const sourceFilter = baseMetrics[0] && src(baseMetrics[0].metric_code).source_filter;
   let from = `FROM ${src(baseMetrics[0].metric_code).source_table} s`;
-  from += `\n  JOIN ${dim.join_table} dim ON s.branch_num = dim.${dim.join_key}`;
+  from += `\n  JOIN ${dim.join_table} dim ON s.branch_num = dim.${dim.join_key} AND s.system_book_code = dim.system_book_code`;
   const where = [];
   if (view.target_scoped) {
     from += `\n  JOIN targets t ON s.system_book_code = t.system_book_code\n    AND s.biz_date BETWEEN t.start_date AND t.end_date`;
@@ -101,21 +141,35 @@ function genAuditSql(viewName, view, levels) {
   const auditName = viewName + "_audit";
   const codes = levels.map((l) => l.level_code);
   const metric = view.metrics[0];
-  const pivots = codes.map((c) => `MAX(CASE WHEN level='${c}' THEN ${metric} END) AS ${c}_total`).join(",\n      ");
+  const tgt = view.target_scoped;
+
+  // 关键：pivot 与 diff 须分层。PG SELECT 别名对同级表达式不可见（仅 ORDER BY 可见），
+  // 故把 pivot 放进子查询 z，diff 在外层 SELECT 引用 z 的输出列。
+  const pivots = codes.map((c) => `MAX(CASE WHEN level='${c}' THEN m END) AS ${c}_total`).join(",\n        ");
   const diffs = [];
   for (let i = 1; i < codes.length; i++) {
     diffs.push(`ABS(${codes[0]}_total - ${codes[i]}_total) AS ${codes[0]}_vs_${codes[i]}_diff`);
   }
-  const tgt = view.target_scoped;
+
+  const outCols = [];
+  if (tgt) outCols.push("target_id");
+  for (const c of codes) outCols.push(`${c}_total`);
+  outCols.push(...diffs);
+
   return `DROP VIEW IF EXISTS ${auditName};
 CREATE VIEW ${auditName} AS
-  SELECT${tgt ? " target_id," : ""}
-      ${pivots}${diffs.length ? ",\n      " + diffs.join(",\n      ") : ""}
+  SELECT
+    ${outCols.join(",\n    ")}
   FROM (
-    SELECT${tgt ? " target_id," : ""} level, SUM(${metric}) AS ${metric}
-    FROM ${viewName}
-    GROUP BY ${tgt ? "target_id, " : ""}level
-  ) x${tgt ? " GROUP BY target_id" : ""};
+    SELECT${tgt ? "\n      target_id," : ""}
+        ${pivots}
+    FROM (
+      SELECT${tgt ? " target_id," : ""} level, SUM(${metric}) AS m
+      FROM ${viewName}
+      GROUP BY ${tgt ? "target_id, " : ""}level
+    ) y
+    GROUP BY${tgt ? " target_id" : ""}
+  ) z;
 ALTER VIEW ${auditName} SET (security_invoker = true);
 GRANT SELECT ON ${auditName} TO authenticated, anon;`;
 }
@@ -123,7 +177,7 @@ GRANT SELECT ON ${auditName} TO authenticated, anon;`;
 function genViewSql(view, model) {
   const dim = model.dims.find((d) => d.dim_code === view.dimension);
   if (!dim) throw new Error(`维度 ${view.dimension} 未注册`);
-  const { baseMetrics } = validateView(view, model);
+  const { sourceTable, baseMetrics } = validateView(view, model);
   const levels = model.levels
     .filter((l) => l.dim_code === view.dimension && view.levels.includes(l.level_code))
     .sort((a, b) => a.depth - b.depth);
@@ -131,7 +185,7 @@ function genViewSql(view, model) {
 
   const branches = levels.map((lvl) => {
     const parent = lvl.parent_level ? levels.find((l) => l.level_code === lvl.parent_level) : null;
-    return genLevelBranch(view, lvl, parent, baseMetrics, model, dim);
+    return genLevelBranch(view, lvl, parent, baseMetrics, model, dim, sourceTable);
   });
 
   const viewName = `report_${view.name}_v`;
