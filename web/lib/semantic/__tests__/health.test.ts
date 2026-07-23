@@ -53,4 +53,10 @@ describe('computeAuditStats', () => {
     expect(s.status).toBe('ok');
     expect(s.diffColumns).toEqual([]);
   });
+  it('non-array (PostgREST error object) → ok, no crash', () => {
+    const errObj = { code: 'PGRST205', message: 'Could not find the table', hint: '', details: '' };
+    const s = computeAuditStats(errObj as any);
+    expect(s.status).toBe('ok');
+    expect(s.diffColumns).toEqual([]);
+  });
 });

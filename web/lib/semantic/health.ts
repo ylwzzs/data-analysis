@@ -17,7 +17,7 @@ export function computeAuditStats(rows: any[]): {
   status: 'ok' | 'warn';
   totals: Record<string, number>;
 } {
-  if (!rows.length) return { diffColumns: [], status: 'ok', totals: {} };
+  if (!Array.isArray(rows) || !rows.length) return { diffColumns: [], status: 'ok', totals: {} };
   const allKeys = Object.keys(rows[0]);
   const diffKeys = allKeys.filter((k) => k.endsWith('_diff'));
   const totalKeys = allKeys.filter((k) => k.endsWith('_total'));

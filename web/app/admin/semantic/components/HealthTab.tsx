@@ -7,6 +7,7 @@ type Audit = {
   diffColumns: DiffCol[];
   status: 'ok' | 'warn';
   totals: Record<string, number>;
+  error?: string;
 };
 
 const viewName = (v: string) => v.replace(/^report_/, '').replace(/_v_audit$/, '');
@@ -64,7 +65,10 @@ export default function HealthTab() {
             <tbody>
               {audits.map((a) => (
                 <tr key={a.view} className="border-t">
-                  <td className="px-2 py-1 font-mono">{viewName(a.view)}</td>
+                  <td className="px-2 py-1 font-mono">
+                    {viewName(a.view)}
+                    {a.error && <span className="text-amber-600 ml-2 text-xs">{a.error}</span>}
+                  </td>
                   <td className="px-2 py-1 tabular-nums">
                     {a.diffColumns.map((d) => (
                       <span
@@ -75,7 +79,9 @@ export default function HealthTab() {
                       </span>
                     ))}
                   </td>
-                  <td className="px-2 py-1">{a.status === 'ok' ? '🟢' : '🔴'}</td>
+                  <td className="px-2 py-1">
+                    {a.error ? <span className="text-amber-600">⚠ 查询失败</span> : a.status === 'ok' ? '🟢' : '🔴'}
+                  </td>
                 </tr>
               ))}
             </tbody>

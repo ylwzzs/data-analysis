@@ -18,7 +18,15 @@ export async function GET() {
   const audits = [];
   for (const view of auditViews) {
     const r = await fetch(`${POSTGREST_URL}/${view}?limit=1000`, { headers });
+    if (!r.ok) {
+      audits.push({ view, diffColumns: [], status: 'warn', totals: {}, error: `query ${r.status}` });
+      continue;
+    }
     const rows = await r.json();
+    if (!Array.isArray(rows)) {
+      audits.push({ view, diffColumns: [], status: 'warn', totals: {}, error: 'non-array response' });
+      continue;
+    }
     audits.push({ view, ...computeAuditStats(rows) });
   }
 
