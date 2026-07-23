@@ -614,6 +614,62 @@ app.post("/carry-dims", async (req, res) => {
   }
 });
 
+// A4 derive: wholesale_detail parquet → dim_customer（派生物化）
+// DuckDB 读 parquet 全历史 DISTINCT → 软删除(is_active=false) → upsert(标回 true)
+// COPY parquet 由 carry-dims 自动（dim_customer 注册 datasets kind=dim carry_enabled）
+app.post("/derive-dim-customer", async (req, res) => {
+  const reqKey = req.headers["x-agent-key"]
+    || (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+  if (!AGENT_API_KEY || reqKey !== AGENT_API_KEY) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  if (!pgPool) return res.status(500).json({ error: "PostgreSQL not configured" });
+  const startedAt = Date.now();
+  try {
+    // 1. DuckDB 派生（共享 conn；批发只 3120，parquet 无 system_book_code 列→硬编码）
+    const deriveSql = `
+      SELECT '3120' AS system_book_code, client_code,
+             arg_max(client_name, audit_time) AS client_name,
+             MIN(CAST(audit_time AS DATE)) AS first_order_date,
+             MAX(CAST(audit_time AS DATE)) AS last_order_date,
+             COUNT(DISTINCT CAST(audit_time AS DATE)) AS active_days
+      FROM read_parquet('s3://${S3_BUCKET}/lemeng/wholesale_detail/*/*/all.parquet')
+      WHERE client_code IS NOT NULL AND client_code <> ''
+      GROUP BY client_code`;
+    const rows = await runQuery(deriveSql);
+    console.log(`[derive-dim-customer] derived ${rows.length} customers`);
+
+    // 2. 软删除：全量标非活跃（upsert 见到的会标回 true）
+    await pgPool.query("UPDATE dim_customer SET is_active = false, updated_at = NOW()");
+
+    // 3. upsert（is_active=true；updated_at 由 upsertRow 自动 NOW()）
+    for (const r of rows) {
+      await upsertRow('dim_customer', {
+        system_book_code: r.system_book_code,
+        client_code: r.client_code,
+        client_name: r.client_name,
+        first_order_date: r.first_order_date,
+        last_order_date: r.last_order_date,
+        active_days: r.active_days,
+        is_active: true,
+      }, ['system_book_code', 'client_code']);
+    }
+
+    // 4. 统计
+    const cnt = await pgPool.query("SELECT COUNT(*)::int AS n, COUNT(*) FILTER (WHERE is_active)::int AS a FROM dim_customer");
+    res.json({
+      success: true,
+      derived: rows.length,
+      total: cnt.rows[0].n,
+      active: cnt.rows[0].a,
+      duration_ms: Date.now() - startedAt,
+    });
+  } catch (err) {
+    console.error("[derive-dim-customer] Error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 字段转换函数
 function transformRow(row, mapping) {
   const result = {};
