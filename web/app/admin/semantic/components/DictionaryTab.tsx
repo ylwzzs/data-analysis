@@ -40,7 +40,7 @@ export default function DictionaryTab() {
         ))}
         <span className="ml-auto text-sm text-gray-500 self-center">{rows.length} 项</span>
       </div>
-      <table className="w-full text-sm border">
+      <table className="w-full text-sm border tabular-nums">
         <thead className="bg-gray-50">
           <tr className="text-left">
             <th className="px-2 py-1">类型</th>
