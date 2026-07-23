@@ -39,7 +39,6 @@ SELECT c.system_book_code, c.client_code, c.client_name,
 FROM dim_customer c
 LEFT JOIN dim_customer_ext e
   ON c.system_book_code = e.system_book_code AND c.client_code = e.client_code;
-ALTER VIEW customer_full SET (security_invoker = true);
 COMMENT ON VIEW customer_full IS '客户+扩展视图（base JOIN ext）';
 
 -- datasets 注册（carry-dims 读 kind=dim AND carry_enabled=true 自动 COPY parquet）

@@ -639,20 +639,28 @@ app.post("/derive-dim-customer", async (req, res) => {
     const rows = await runQuery(deriveSql);
     console.log(`[derive-dim-customer] derived ${rows.length} customers`);
 
-    // 2. 软删除：全量标非活跃（upsert 见到的会标回 true）
-    await pgPool.query("UPDATE dim_customer SET is_active = false, updated_at = NOW()");
-
-    // 3. upsert（is_active=true；updated_at 由 upsertRow 自动 NOW()）
-    for (const r of rows) {
-      await upsertRow('dim_customer', {
-        system_book_code: r.system_book_code,
-        client_code: r.client_code,
-        client_name: r.client_name,
-        first_order_date: r.first_order_date,
-        last_order_date: r.last_order_date,
-        active_days: r.active_days,
-        is_active: true,
-      }, ['system_book_code', 'client_code']);
+    // 2-3. 事务：软删除 + upsert（失败 ROLLBACK，避免 is_active 全 false 残留）
+    const client = await pgPool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query("UPDATE dim_customer SET is_active = false, updated_at = NOW()");
+      for (const r of rows) {
+        await client.query(
+          `INSERT INTO dim_customer (system_book_code, client_code, client_name, first_order_date, last_order_date, active_days, is_active)
+           VALUES ($1, $2, $3, $4, $5, $6, true)
+           ON CONFLICT (system_book_code, client_code) DO UPDATE SET
+             client_name=EXCLUDED.client_name, first_order_date=EXCLUDED.first_order_date,
+             last_order_date=EXCLUDED.last_order_date, active_days=EXCLUDED.active_days,
+             is_active=true, updated_at=NOW()`,
+          [r.system_book_code, r.client_code, r.client_name, r.first_order_date, r.last_order_date, r.active_days]
+        );
+      }
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
     }
 
     // 4. 统计
