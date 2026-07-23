@@ -1,7 +1,7 @@
 import { ReactNode } from 'react';
 import Link from 'next/link';
 import { cookies } from 'next/headers';
-import { LayoutDashboard, Package, Store, Target, Users, Settings, Boxes } from 'lucide-react';
+import { LayoutDashboard, Package, Store, Target, Users, Settings, Boxes, Layers } from 'lucide-react';
 import { Toaster } from 'sonner';
 
 export default async function AdminLayout({
@@ -53,6 +53,9 @@ export default async function AdminLayout({
             </div>
             <div className="pt-2">
               <NavItem href="/admin/targets" icon={<Target size={16} />}>目标管理</NavItem>
+            </div>
+            <div className="pt-2">
+              <NavItem href="/admin/semantic" icon={<Layers size={16} />}>语义层</NavItem>
             </div>
             <div className="pt-4 border-t">
               <NavItem href="#" icon={<Users size={16} />} disabled>用户管理</NavItem>
