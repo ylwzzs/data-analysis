@@ -62,6 +62,7 @@ export async function ensureSchedulerInitialized(): Promise<boolean> {
   // 通讯录全量兜底（平台基础设施，独立于 collect_tasks；先注册，不依赖采集任务查询结果/是否为空）
   registerContactSyncJob();
   registerCarryDimsJob();
+  registerDimCustomerJob();
   registerWeeklyReconcileJob();
   registerMonitorJobs();
   registerTargetCloseJob();
@@ -692,6 +693,31 @@ function registerCarryDimsJob() {
   }, { timezone: "Asia/Shanghai" });
   scheduledJobs.set(JOB_KEY, job);
   console.log("[scheduler] 注册维表 carry 兜底 (33 4 * * *, Asia/Shanghai)");
+}
+
+// A4: dim_customer 派生定时（每天 04:20，carry-dims 04:33 前→carry 自动 COPY 当日新客户）
+function registerDimCustomerJob() {
+  const JOB_KEY = "__dim_customer";
+  if (scheduledJobs.has(JOB_KEY)) return;
+  if (!cron.validate("20 4 * * *")) return;
+  const job = cron.schedule("20 4 * * *", async () => {
+    if (runningTasks.has(JOB_KEY)) return;
+    runningTasks.add(JOB_KEY);
+    try {
+      console.log("[scheduler] ⏰ dim_customer 派生定时触发");
+      const resp = await fetch(`${DUCKDB_URL}/derive-dim-customer`, {
+        method: "POST", headers: { "x-agent-key": AGENT_API_KEY },
+      });
+      const data = await resp.json().catch(() => ({}));
+      console.log("[scheduler] derive-dim-customer 结果:", resp.status, data);
+    } catch (e: any) {
+      console.error("[scheduler] derive-dim-customer 异常:", e.message);
+    } finally {
+      runningTasks.delete(JOB_KEY);
+    }
+  }, { timezone: "Asia/Shanghai" });
+  scheduledJobs.set(JOB_KEY, job);
+  console.log("[scheduler] 注册 dim_customer 派生 (20 4 * * *, Asia/Shanghai)");
 }
 
 // D: 目标固化定时兜底（每天 05:10，C1 daily compute 之后；end_date<today 的 active 目标自动固化）
